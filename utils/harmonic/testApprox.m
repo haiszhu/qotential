@@ -20,6 +20,7 @@ addpath ../
 
 figure(1),clf,
 figure(2),clf,
+figure(3),clf,
 for j_scale = 1:numel(Scale) 
     scale = Scale(j_scale);
     [uvs,wts]=get_vioreanu_nodes(order-1); 
@@ -63,7 +64,7 @@ for j_scale = 1:numel(Scale)
     % setup matrix
     %[fx,fy,fz] = evalHarmonicGrad([Sxl,[Sxl(1,1);Sxl(2,1);0]],n); 
     n = order; [fx,fy,fz] = evalHarmonicGrad(Sxl,n);   % harmonic gradient
-    fx{1}{1} = 0*fx{1}{1}; fy{1}{1} = 0*fy{1}{1}; fz{1}{1} = ones(size(fz{1}{1}));
+    fx{1}{1} = 0*fx{1}{1}; fy{1}{1} = 0*fy{1}{1}; fz{1}{1} = ones(size(fz{1}{1})); % technically speaking, we can do grad(x), grad(y), or grad(z), grad(z) seems to be more convenient...
     rhs = zeros(4*order*(order+1)/2,1); rhs(1:4:end) = mul';
     Fc = []; Fi = []; Fj = []; Fk = [];
     for k=n:-1:1

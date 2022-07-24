@@ -27,11 +27,11 @@ Cp = derivative_coefficients(c);    % cell array of dim n, 1st, 2nd, ... n-th de
                                     %          10th row (rescaled derivative of 10th degree): 1/10*1/256*(3465*2*x-30030*4*x^3+90090*6*x^5-109395*8*x^7+46189*10*x^9) 
                                     %
                                     %        ** 2nd cell, Cp{2} is rescaled 2nd derivative of P_k(x), k<=n, therefore of 2 dim less than the dim of c
-                                    %          1st  row (rescaled 2nd derivative of 2nd  degree): 1/2*1/2*(3*2)
-                                    %          2nd  row (rescaled 2nd derivative of 3rd  degree): 1/2*1/3*1/2*(5*3*2*x)
-                                    %          3rd  row (rescaled 2nd derivative of 4th  degree): 1/3*1/4*1/8*(-30*2*1+35*4*3*x^2)
+                                    %          1st  row (rescaled 2nd derivative of 2nd   degree): 1/2*1/2*(3*2)
+                                    %          2nd  row (rescaled 2nd derivative of 3rd   degree): 1/2*1/3*1/2*(5*3*2*x)
+                                    %          3rd  row (rescaled 2nd derivative of 4th   degree): 1/3*1/4*1/8*(-30*2*1+35*4*3*x^2)
                                     %              :
-                                    %          9th  row (rescaled 2nd derivative of 4th  degree): 1/9*1/10*1/256*(3465*2-30030*4*3*x^2+90090*6*5*x^4-109395*8*7*x^6+46189*10*9*x^8) 
+                                    %          9th  row (rescaled 2nd derivative of 10th  degree): 1/9*1/10*1/256*(3465*2-30030*4*3*x^2+90090*6*5*x^4-109395*8*7*x^6+46189*10*9*x^8) 
                                     %
                                     %        ** last cell, Cp{n} is rescaled n-nd derivative of P_n(x)
                                     %          only 1 entry: c(end,end)

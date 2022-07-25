@@ -2,7 +2,8 @@ function [fx,fy,fz] = harmonic_basis_gradient(order)
 % gradient of spherical harmonics in x-y-z
 %
 % Hai 07/23/20
-% modify coefficient... to match evalHarmonicGrad.m 07/24/22
+% modify coefficient (does not have the alternating sign (-1)^k from Associated Legendre polynomials)... 
+% to match evalHarmonicGrad.m 07/24/22
  
 if order >= 1
     % P_{1,1} = x

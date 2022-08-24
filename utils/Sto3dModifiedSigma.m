@@ -26,7 +26,7 @@ Mat_10 = cell(1,n); Mat_11 = cell(1,n); Mat_12 = cell(1,n); Mat_13 = cell(1,n);
 mat_11 = [0,0,0;-2,0,0;0,-1,0;0,0,-1];   % to be multiplied by r0(1), target
 mat_12 = [0,0,0;0,0,0;-1,0,0;0,0,0];     % r0(2)
 mat_13 = [0,0,0;0,0,0;0,0,0;-1,0,0];     % r0(3)
-for k=1:numel(mu_i)
+for k=1:n
   mat_10 = [0,0,0;2*r(1,k),0,0;r(2,k),r(1,k),0;r(3,k),0,r(1,k)];
   nrmat = [0,nr(1,k),nr(2,k),nr(3,k);-nr(1,k),0,nr(3,k),-nr(2,k);-nr(2,k),-nr(3,k),0,nr(1,k);-nr(3,k),nr(2,k),-nr(1,k),0];
   % 

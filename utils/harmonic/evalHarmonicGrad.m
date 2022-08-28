@@ -1,11 +1,14 @@
-function [fx,fy,fz] = evalHarmonicGrad(r,n)
+function [fx,fy,fz,gradF] = evalHarmonicGrad(r,n,convention_flag)
 % numerical evaluation on scaled gradient of harmonic polynoimals, no
 % dependency on target...
 %
 % Hai 07/29/20
 % arbitrarily high order, Hai 07/23/22
+% output conventionally ordered grad, Hai 08/28/22 
 
-x = r(1,:); y = r(2,:); z = r(3,:);
+if nargin < 3, convention_flag = 0; end
+
+x = r(1,:); y = r(2,:); z = r(3,:); nt = numel(x);
 rho2 = x.^2+y.^2+z.^2;  % rho square
 
 c = legendre_coefficients(n);   % lower triangular matrix of dim (n+1)*(n+1), coefficient of Legendre polynomial of degree less or equal than n, i.e. P_k(x), k<=n 
@@ -104,6 +107,49 @@ for k=1:n
         fz{m}{j} = hj.*lj_z;
         
     end
+end
+
+% need to come back and check this constant case...
+fx{1}{1} = 0*fx{1}{1}; fy{1}{1} = 0*fy{1}{1}; fz{1}{1} = ones(size(fz{1}{1}));
+if convention_flag
+
+  F1 = NaN(nt,n*(n+1)/2); F2 = F1; F3 = F1; % initialize f_1, f_2, f_3 in eq(27)
+  for k=1:n
+    F1(:,k*(k-1)/2+(1:k)) = vertcat(fx{k}{:})';
+    F2(:,k*(k-1)/2+(1:k)) = vertcat(fy{k}{:})';
+    F3(:,k*(k-1)/2+(1:k)) = vertcat(fz{k}{:})';
+  end
+  gradF.F1 = F1; gradF.F2 = F2; gradF.F3 = F3;
+
+  % to match the original approximation matrix (for debug purpose only)
+  for k=n:-1:1
+    F1(:,n*(n+1)/2-k*(k+1)/2+(1:k)) = vertcat(fx{k}{:})';
+    F2(:,n*(n+1)/2-k*(k+1)/2+(1:k)) = vertcat(fy{k}{:})';
+    F3(:,n*(n+1)/2-k*(k+1)/2+(1:k)) = vertcat(fz{k}{:})';
+  end
+  F0 = zeros(nt,n*(n+1)/2);
+  Mmatrix0 = [[ F0 -F1 -F2 -F3];...
+              [ F1  F0 -F3  F2];...
+              [ F2  F3  F0 -F1];...
+              [ F3 -F2  F1  F0]];
+  
+  idx0 = 1:4*(n*(n+1)/2)+4:(n*(n+1)/2-1)*(4*(n*(n+1)/2)+4)+1; 
+  idx1 = idx0 + n*(n+1)/2*4*n*(n+1)/2 + 1;
+  idx2 = idx1 + n*(n+1)/2*4*n*(n+1)/2 + 1;
+  idx3 = idx2 + n*(n+1)/2*4*n*(n+1)/2 + 1;
+  row0 = mod(idx0-1,4*n*(n+1)/2)+1; row1 = mod(idx1-1,4*n*(n+1)/2)+1; row2 = mod(idx2-1,4*n*(n+1)/2)+1; row3 = mod(idx3-1,4*n*(n+1)/2)+1;
+  Q_mat_perm = sparse([row0 row1 row2 row3],1:4*n*(n+1)/2,ones(1,4*n*(n+1)/2)); % from traditional to [4;4;4;...]
+
+  idx0 = 1:4*nt+4:(nt-1)*(4*nt+4)+1; 
+  idx1 = idx0 + nt*4*nt + 1;
+  idx2 = idx1 + nt*4*nt + 1;
+  idx3 = idx2 + nt*4*nt + 1;
+  row0 = mod(idx0-1,4*nt)+1; row1 = mod(idx1-1,4*nt)+1; row2 = mod(idx2-1,4*nt)+1; row3 = mod(idx3-1,4*nt)+1;
+  Q_mat_permt = sparse([row0 row1 row2 row3],1:4*nt,ones(1,4*nt));
+
+  gradF.Mmatrix0 = Q_mat_permt*Mmatrix0*Q_mat_perm';
+else
+  gradF = [];
 end
 
 end

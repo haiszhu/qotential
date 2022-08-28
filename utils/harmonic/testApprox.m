@@ -12,7 +12,7 @@ ftest = @(x,y) sin(3*x)+cos(2*y)+x.^2+y.^3+exp(x.*y); %+sin(3*x.*(y+1/3)+1/2);
 
 Scale = [1/2,1/4,1/8,1/12,1/16,1/24,1/32,1/64];
 Err = zeros(size(Scale));
-order = 16; % <= 21 for Vioreanu nodes
+order = 12; % <= 21 for Vioreanu nodes
 ordert = 41; % targets for verification
 
 % setup approximation nodes
@@ -62,41 +62,30 @@ for j_scale = 1:numel(Scale)
     
     %%  lower left
     % setup matrix
-    %[fx,fy,fz] = evalHarmonicGrad([Sxl,[Sxl(1,1);Sxl(2,1);0]],n); 
-    n = order; [fx,fy,fz] = evalHarmonicGrad(Sxl,n);   % harmonic gradient
-    fx{1}{1} = 0*fx{1}{1}; fy{1}{1} = 0*fy{1}{1}; fz{1}{1} = ones(size(fz{1}{1})); % technically speaking, we can do grad(x), grad(y), or grad(z), grad(z) seems to be more convenient...
-    rhs = zeros(4*order*(order+1)/2,1); rhs(1:4:end) = mul';
-    Fc = []; Fi = []; Fj = []; Fk = [];
-    for k=n:-1:1
-        for j=1:k
-            Fc = [Fc, zeros(size(Sxl(1,:)')),             -fx{k}{j}',             -fy{k}{j}',             -fz{k}{j}'];
-            Fi = [Fi,              fx{k}{j}', zeros(size(Sxl(1,:)')),             -fz{k}{j}',              fy{k}{j}'];
-            Fj = [Fj,              fy{k}{j}',              fz{k}{j}', zeros(size(Sxl(1,:)')),             -fx{k}{j}'];
-            Fk = [Fk,              fz{k}{j}',             -fy{k}{j}',              fx{k}{j}', zeros(size(Sxl(1,:)'))];
-        end
-    end
-    Mmatrix = zeros(4*order*(order+1)/2);
-    Mmatrix(1:4:end,:)=Fc; Mmatrix(2:4:end,:)=Fi; Mmatrix(3:4:end,:)=Fj; Mmatrix(4:4:end,:)=Fk;
+    n = order; [fx,fy,fz,gradF] = evalHarmonicGrad(Sxl,n,1);   % harmonic gradient
+    rhs = [mul, zeros(1,3*order*(order+1)/2)]';
+    F0 = zeros(order*(order+1)/2);
+    F1 = gradF.F1; F2 = gradF.F2; F3 = gradF.F3;
+    Mmatrix = [[ F0 -F1 -F2 -F3];...
+               [ F1  F0 -F3  F2];...
+               [ F2  F3  F0 -F1];...
+               [ F3 -F2  F1  F0]];  % eq(27)
     soln = Mmatrix\rhs;
     
     % test approximation at a given target
     testpt1 =  Sxlt;
-    [fxpt,fypt,fzpt] = evalHarmonicGrad(testpt1,n);
+    [fxpt,fypt,fzpt,gradFt] = evalHarmonicGrad(testpt1,n,1);
     fxpt{1}{1} = 0*fxpt{1}{1}; fypt{1}{1} = 0*fypt{1}{1}; fzpt{1}{1} = ones(size(fzpt{1}{1}));
-    Fcpt = []; Fipt = []; Fjpt = []; Fkpt = [];
-    for k=n:-1:1
-        for j=1:k
-            Fcpt = [Fcpt, zeros(size(testpt1(1,:)')), -fxpt{k}{j}', -fypt{k}{j}', -fzpt{k}{j}'];
-            Fipt = [Fipt, fxpt{k}{j}', zeros(size(testpt1(1,:)')),-fzpt{k}{j}', fypt{k}{j}'];
-            Fjpt = [Fjpt, fypt{k}{j}', fzpt{k}{j}', zeros(size(testpt1(1,:)')),-fxpt{k}{j}'];
-            Fkpt = [Fkpt, fzpt{k}{j}',-fypt{k}{j}', fxpt{k}{j}', zeros(size(testpt1(1,:)'))];
-        end
-    end
-    mu0 = Fcpt*soln; 
-    diff = mu0-mut(idxlt)';
-    mui = Fipt*soln; 
-    muj = Fjpt*soln; 
-    muk = Fkpt*soln;
+    F0t = zeros(size(testpt1,2),order*(order+1)/2); 
+    F1t = gradFt.F1; F2t = gradFt.F2; F3t = gradFt.F3;
+    Mu_parts = [[ F0t -F1t -F2t -F3t];...
+                [ F1t  F0t -F3t  F2t];...
+                [ F2t  F3t  F0t -F1t];...
+                [ F3t -F2t  F1t  F0t]]*soln;
+    diff  = Mu_parts(1:end/4)-mut(idxlt)';
+    mui = Mu_parts(end/4+1:end/2); 
+    muj = Mu_parts(end/2+1:3*end/4); 
+    muk = Mu_parts(3*end/4+1:end);
 
     err = NaN(size(xt1));
     err(idxlt) = diff;

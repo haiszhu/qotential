@@ -7,7 +7,7 @@ function [fx,fy,fz] = harmonic_basis_gradient(order)
  
 if order >= 1
     % P_{1,1} = x
-    fx{1}{1} = @(x,y,z) ones(size(x));     fy{1}{1} = @(x,y,z) zeros(size(x));      fz{1}{1} = @(x,y,z) zeros(size(x));
+    fx{1}{1} = @(x,y,z) zeros(size(x));     fy{1}{1} = @(x,y,z) zeros(size(x));      fz{1}{1} = @(x,y,z) ones(size(x));
 end
 
 if order >= 2

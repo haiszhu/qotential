@@ -1,3 +1,6 @@
 [submodule "utils/FMM3D"]
 	path = utils/FMM3D
 	url = https://github.com/flatironinstitute/FMM3D.git
+[submodule "utils/kdtree"]
+	path = utils/kdtree
+	url = https://github.com/taiya/kdtree.git

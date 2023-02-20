@@ -1,0 +1,22 @@
+# System-dependent settings for fortran lib
+
+# Change these if you want to use different compilers:
+CC = gcc
+FC = gfortran
+CFLAGS = -O3 -march=native
+FFLAGS = $(CFLAGS)
+
+# Change this to location of MATLAB's command line mex executable:
+# (For a Mac system, this is something of the form
+#  /Applications/MATLAB_R2014a.app/bin/mex )
+# For Mac if you want to bypass mex as the compiler, see */makefile.nomex
+MEX = mex
+# Instead for Octave use: (don't forget to make clean when switch)
+#MEX = mkoctave --mex
+
+# Change this to the location of your MWrap executable,
+# either an absolute path, or a path relative to
+# each of the four demo subdirectories:
+MWRAP = ~/mwrap/mwrap
+
+OMPLIBS = -lgomp

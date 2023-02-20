@@ -1,0 +1,3 @@
+MWrap or interfacing MATLAB to a Fortran library via MEX.
+copy make.inc.your_system make.inc
+make

@@ -1,0 +1,365 @@
+% MWrap file for Fortran lib.
+% Generates gateway.c and moments_mex.m
+% Following is augmented MATLAB code, ie there are special lines beginning with
+% the @ and # symbols.
+
+@function [gradf,ijidx] = evaltensorproductharmonicgrad_mex(r,order)
+
+gradf = [];
+nt = numel(r(1,:));
+orderp1 = order + 1;
+order2p1 = 2*order + 1;
+order2 = order^2;
+# FORTRAN evaltensorproductharmonicgrad(int[1] nt, double[3,nt] r, int[1] order, output double[nt,order2] fx, output double[nt,order2] fy, output double[nt,order2] fz, output double[nt,order2] f, output int[2,order2] ijidx);
+
+gradf.F1 = fx; gradf.F2 = fy; gradf.F3 = fz;
+gradf.F = f;
+
+% keyboard
+
+end
+
+@function [coeffs,powx,powy,powz,lens,ijidx]=hijcoeffsall_mex(order)
+
+order2 = order*order;
+# FORTRAN hijcoeffsall(int[1] order, output double[order2,order2] coeffs, output int[order2,order2] powx, output int[order2,order2] powy, output int[order2,order2] powz, output int[order2] lens, output int[2,order2] ijidx);
+
+end
+
+@function [coeffs_ext,pow_ext,len] = hijcoeffs0_mex(i,j,order2)
+
+# FORTRAN hijcoeffs0(int[1] i, int[1] j, int[1] order2, output double[order2] coeffs_ext, output int[3,order2] pow_ext, output int[1] len);
+coeffs_ext = coeffs_ext';
+
+end
+
+@function  ijidx = tdordering_mex(orderx,ordery)
+
+orderxy = orderx*ordery;
+# FORTRAN tdordering(int[1] orderx, int[1] ordery, output int[2,orderxy] ijidx);
+
+end
+
+@function [coeffs,pow] = hijcoeffs_mex(i,j)
+
+ip1 = i+1; jp1 = j+1;
+ip1xjp1 = ip1*jp1;
+# FORTRAN hijcoeffs(int[1] i, int[1] j, output double[ip1xjp1] coeffs, output int[3,ip1xjp1] pow);
+coeffs = coeffs';
+
+end
+
+@function [xx,yy] = meshgrid_mex(x,y)
+
+n = numel(x);
+m = numel(y);
+
+# FORTRAN meshgrid(int[1] n, int[n] x, int[1] m, int[m] y, output int[m,n] xx, output int[m,n] yy);
+
+end
+
+@function coeffs_updt = hijcoeffsk_mex(i, j, k, pow)
+
+kp1 = k+1;
+# FORTRAN lenofnckcoeffs(int[1] i, int[1] j, int[1] k, output int[1] len, output int[kp1] idx_flag);
+
+[yPow,xPow]=meshgrid(0:j,0:i);
+pow = [xPow(:),yPow(:)]'; 
+
+ip1 = i+1; jp1 = j+1;
+ip1xjp1 = ip1*jp1; 
+
+# FORTRAN hijcoeffsk0(int[1] i, int[1] j, int[1] k, int[2,ip1xjp1] pow, int[1] len, output double[ip1xjp1] coeffs_updt);
+coeffs_updt = coeffs_updt';
+end
+
+@function [nck_coeffs,nck_pow] = polylapder2d_mex(i, j, ell)
+
+nck_der = 2*[ell:-1:0; 0:1:ell];
+idx = (nck_der(1,:)<=i) & (nck_der(2,:)<=j);
+len = sum(idx);
+nck_der = nck_der(:,idx);
+nck_idx = 1:ell+1; nck_idx = nck_idx(idx);
+nck_pow = [];
+ellp1 = ell+1;
+# FORTRAN lenofnckcoeffs(int[1] i, int[1] j, int[1] ell, output int[1] len, output int[ellp1] idx_flag);
+
+if len
+# FORTRAN polylapder2d(int[1] i, int[1] j, int[1] ell, int[1] len, int[2,len] nck_der, int[len] nck_idx, output double[len] nck_coeffs, output int[3,len] nck_pow);
+else
+nck_coeffs = []; nck_pow = [];
+end
+end
+
+@function [Omega_x,Omega_y,Omega_z] = omegaallvec_mex(r0,M_all,order,onm_0_rs,onm_1_rs,onm_2_rs,onm_3_rs,h_dim,ijIdx)
+
+m = numel(r0(1,:));
+M_all = reshape(M_all,[],m);
+dim1 = numel(M_all(:,1));
+n = numel(onm_0_rs(:,1))/h_dim;
+nh_dim = n*h_dim;
+morder = 2*order + 2;
+h_dim4 = h_dim*4;
+
+# FORTRAN omegaallvec(int[1] m, double[3,m] r0, int[1] dim1, double[dim1,m] M_all, int[1] n, int[1] morder, double[nh_dim,4] onm_0_rs, double[nh_dim,4] onm_1_rs, double[nh_dim,4] onm_2_rs, double[nh_dim,4] onm_3_rs, int[1] h_dim, int[2,h_dim] ijIdx, output double[m,h_dim4] Omega_x, output double[m,h_dim4] Omega_y, output double[m,h_dim4] Omega_z);
+
+end
+
+@function Omega = omegaall_mex(r0,M_all,order,onm_0_rs,onm_1_rs,onm_2_rs,onm_3_rs,h_dim,ijIdx)
+
+m = numel(r0(1,:));
+M_all = reshape(M_all,[],m);
+dim1 = numel(M_all(:,1));
+n = numel(onm_0_rs(:,1))/h_dim;
+nh_dim = n*h_dim;
+morder = 2*order + 2;
+h_dim4 = h_dim*4;
+
+# FORTRAN omegaall(int[1] m, double[3,m] r0, int[1] dim1, double[dim1,m] M_all, int[1] n, int[1] morder, double[nh_dim,4] onm_0_rs, double[nh_dim,4] onm_1_rs, double[nh_dim,4] onm_2_rs, double[nh_dim,4] onm_3_rs, int[1] h_dim, int[2,h_dim] ijIdx, output double[m,h_dim4] Omega);
+
+end
+
+@function m_all=momentsallplain_mex(r0,r,order,np,p)
+
+
+m = numel(r0(1,:));
+n = numel(r(1,:));
+dim1 = n*(2*order+2);
+
+# FORTRAN momentsallplain(int[1] m, double[3,m] r0, int[1] n, double[3,n] r, int[1] order, int[1] np, int[1] p, int[1] dim1, output double[dim1,m] m_all);
+
+m_all = reshape(m_all,n,2*order+2,m);
+
+end
+
+% @function [n_all,m_all,l_all]=momentsall_mex(r0,r,order,sqn_flag,r_root,t_root,tj,wj,D,w_bclag,np,p)
+% 
+% nout = double(nargout);
+% 
+% m = numel(r0(1,:));
+% n = numel(r(1,:));
+% sqn_flag = double(sqn_flag);
+% np3 = np*3;
+% r_root = reshape(r_root,np3,m);
+% dim1 = n*(2*order+2);
+% 
+% if nout < 3
+% # FORTRAN momentsall(int[1] m, double[3,m] r0, int[1] n, double[3,n] r, int[1] order, int[np,m] sqn_flag, double[np3,m] r_root, double[np,m] t_root, double[p] tj, double[p] wj, double[p,p] D, double[p] w_bclag, int[1] np, int[1] p, int[1] dim1, output double[dim1,m] n_all, output double[dim1,m] m_all);
+% 
+%   m_all = reshape(m_all,n,2*order+2,m);
+%   n_all = reshape(n_all,n,2*order+2,m);
+% else
+% # FORTRAN moments2all(int[1] m, double[3,m] r0, int[1] n, double[3,n] r, int[1] order, int[np,m] sqn_flag, double[np3,m] r_root, double[np,m] t_root, double[p] tj, double[p] wj, double[p,p] D, double[p] w_bclag, int[1] np, int[1] p, int[1] dim1, output double[dim1,m] n_all, output double[dim1,m] m_all, output double[dim1,m] l_all);
+% 
+%   l_all = reshape(l_all,n,2*order+2,m);
+%   m_all = reshape(m_all,n,2*order+2,m);
+%   n_all = reshape(n_all,n,2*order+2,m);
+% end
+% 
+% % keyboard
+% 
+% end
+
+% @function mk_j=momentsup_mex(tgl,wgl,r,r0,t_root,r_root,w_bclag,D,order)
+% 
+% p = numel(tgl);
+% morderp1 = 2*order + 2;
+% # FORTRAN momentsup(int[1] p, double[p] tgl, double[p] wgl, double[3,p] r, double[3] r0, double[1] t_root, double[3] r_root, double[p] w_bclag, double[p,p] D, int[1] order, output double[p,morderp1] nk_j, output double[p,morderp1] mk_j);
+% 
+% if 0 % separate routine...
+% % compute length of pan_t_end
+% # FORTRAN lenofpantend(int[1] p, double[p] tgl, double[p] wgl, double[3,p] r, double[3] r0, double[1] t_root, double[3] r_root, double[p] w_bclag, double[p,p] D, output double[1] sqn_dist, output double[1] pan_len, output int[1] len, output int[1] lenl, output int[1] lenr, output double[3,p] rp, output double[p] w);
+% n = p*(len-1);
+% # FORTRAN momentsup0(int[1] p, double[p] tgl, double[p] wgl, double[3,p] r, double[3] r0, double[1] t_root, double[3] r_root, double[p] w_bclag, double[p,p] D, int[1] order, double[1] sqn_dist, double[1] pan_len, int[1] len, int[1] lenl, int[1] lenr, double[3,p] rp, double[p] w, int[1] n, output double[p,morderp1] nk_j, output double[p,morderp1] mk_j, output double[1] test);
+% end
+% 
+% end
+
+
+% @function [r_up,Br]=line3adaptivernearr0_mex(tgl,wgl,r,r0,t_root,r_root,w_bclag,D)
+% 
+% p = numel(tgl);
+% 
+% % compute length of pan_t_end
+% # FORTRAN lenofpantend(int[1] p, double[p] tgl, double[p] wgl, double[3,p] r, double[3] r0, double[1] t_root, double[3] r_root, double[p] w_bclag, double[p,p] D, output double[1] sqn_dist, output double[1] pan_len, output int[1] len, output int[1] lenl, output int[1] lenr, output double[3,p] rp, output double[p] w);
+% 
+% % pan_t_end
+% # FORTRAN addextrapanel(double[1] sqn_dist, double[1] pan_len, double[1] t_root, int[1] len, int[1] lenl, int[1] lenr,  output double[len] pan_t_end, output int[1] npl);
+% 
+% n = p*(len-1);
+% # FORTRAN line3adaptivernearr0(int[1] p, double[p] tgl, double[p] wgl, double[3,p] r, double[p] w_bclag, int[1] len, double[3,p] rp, double[p] w, double[len] pan_t_end, int[1] n, output double[3,n] r_up, output double[3,n] rp_up, output double[p,n] Br, output double[n] test);
+% 
+% end
+
+% @function [sqn_dist,pan_len,len,lenl,lenr,rp,w]=lenofpantend_mex(tgl,wgl,r,r0,t_root,r_root,w_bclag,D)
+% 
+% m = numel(tgl);
+% 
+% # FORTRAN lenofpantend(int[1] m, double[m] tgl, double[m] wgl, double[3,m] r, double[3] r0, double[1] t_root, double[3] r_root, double[m] w_bclag, double[m,m] D, output double[1] sqn_dist, output double[1] pan_len, output int[1] len, output int[1] lenl, output int[1] lenr, output double[3,m] rp, output double[m] w);
+% 
+% end
+
+% @function [pan_t_end, npl]=addextrapanel_mex(sqn_dist, pan_len, t_root)
+% 
+% % compute length of pan_t_end
+% factor = 1.5;
+% if t_root >= 1 % panel on the left side of the target
+%   pan_len_l = factor*pan_len;
+%   ml = floor(log(pan_len_l/sqn_dist)/log(factor));
+%   ml = max(ml,0);
+%   mr = 1; % fake, should be 0, no use
+%   m = ml+2;
+% elseif t_root <= -1 % panel on the right side of the target
+%   pan_len_r = factor*pan_len;
+%   mr = floor(log(pan_len_r/sqn_dist)/log(factor));
+%   mr = max(mr,0);
+%   ml = 1; % fake, should be 0, no use
+%   m = mr+2;
+% else  % subdivide both sides
+%   pan_len_l = factor*(t_root-(-1))/2*pan_len; % roughtly in physical space
+%   ml = floor(log(pan_len_l/sqn_dist)/log(factor)); ml = max(ml,0);
+%   pan_len_r = factor*(1-t_root)/2*pan_len;
+%   mr = floor(log(pan_len_r/sqn_dist)/log(factor)); mr = max(mr,0);
+%   m = ml+mr+3;
+% end
+% 
+% # FORTRAN addextrapanel(double[1] sqn_dist, double[1] pan_len, double[1] t_root, int[1] m, int[1] ml, int[1] mr,  output double[m] pan_t_end, output int[1] npl);
+% 
+% % do any MATLAB postprocessing here
+% pan_t_end = pan_t_end';
+% end
+
+% @function B=bclaginterpmatrix_mex(x, xi, w)
+% n = numel(x);
+% m = numel(xi);
+% # FORTRAN bclaginterpmatrix(double[n] x, int n, double[m] xi, int m, double[n] w, output double[m,n] B);
+% % do any MATLAB postprocessing here
+% end
+
+@function [Nk Mk]=moments_mex(r0,r,order)
+% single-threaded MEX
+
+% MATLAB preprocessing here
+N = numel(r)/3;
+flag = double(nargout); % crucial even though it's int type in Fortran
+                        % later for Lk output?
+% since Nk Mk has type 'output' of given size, no MATLAB preallocation is needed
+% Code for calling the Fortran function
+orderp1 = order + 1; r0 = r0'; r = r';
+# FORTRAN moments(double[3] r0, int N, double[N,3] r, int order, int flag, output double[N,orderp1] Nk, output double[N,orderp1] Mk);
+
+end
+
+@function [Nk Mk Lk]=moments2_mex(r0,r,order)
+% single-threaded MEX
+
+% MATLAB preprocessing here
+N = numel(r)/3;
+flag = double(nargout); % crucial even though it's int type in Fortran
+                        % later for Lk output?
+% since Nk Mk has type 'output' of given size, no MATLAB preallocation is needed
+% Code for calling the Fortran function
+orderp1 = order + 1; r0 = r0'; r = r';
+# FORTRAN moments2(double[3] r0, int N, double[N,3] r, int order, int flag, output double[N,orderp1] Nk, output double[N,orderp1] Mk, output double[N,orderp1] Lk);
+
+end
+
+
+% @function [Omega_x,Omega_y,Omega_z,Omega21,Omega22,Omega23,Omega31,Omega32,Omega33] = omegaallDLPn_mex(r0,M_all,L_all,order,onm_0_rs_x,onm_1_rs_x,onm_2_rs_x,onm_3_rs_x,onm_0_rs_y,onm_1_rs_y,onm_2_rs_y,onm_3_rs_y,onm_0_rs_z,onm_1_rs_z,onm_2_rs_z,onm_3_rs_z,h_dim,ijIdx)
+% 
+% m = numel(r0(1,:));
+% M_all = reshape(M_all,[],m);
+% L_all = reshape(L_all,[],m);
+% dim1 = numel(M_all(:,1));
+% n = numel(onm_0_rs_x(:,1))/h_dim;
+% nh_dim = n*h_dim;
+% morder = 2*order + 2;
+% h_dim4 = h_dim*4;
+% 
+% if nargout <=3
+% # FORTRAN omegaalldlpn(int[1] m, double[3,m] r0, int[1] dim1, double[dim1,m] M_all, double[dim1,m] L_all, int[1] n, int[1] morder, double[nh_dim,11] onm_0_rs_x, double[nh_dim,11] onm_1_rs_x, double[nh_dim,11] onm_2_rs_x, double[nh_dim,11] onm_3_rs_x, double[nh_dim,11] onm_0_rs_y, double[nh_dim,11] onm_1_rs_y, double[nh_dim,11] onm_2_rs_y, double[nh_dim,11] onm_3_rs_y, double[nh_dim,11] onm_0_rs_z, double[nh_dim,11] onm_1_rs_z, double[nh_dim,11] onm_2_rs_z, double[nh_dim,11] onm_3_rs_z, int[1] h_dim, int[2,h_dim] ijIdx, output double[m,h_dim4] Omega_x, output double[m,h_dim4] Omega_y, output double[m,h_dim4] Omega_z);
+% else
+% # FORTRAN omegaalldlpnmat(int[1] m, double[3,m] r0, int[1] dim1, double[dim1,m] M_all, double[dim1,m] L_all, int[1] n, int[1] morder, double[nh_dim,11] onm_0_rs_x, double[nh_dim,11] onm_1_rs_x, double[nh_dim,11] onm_2_rs_x, double[nh_dim,11] onm_3_rs_x, double[nh_dim,11] onm_0_rs_y, double[nh_dim,11] onm_1_rs_y, double[nh_dim,11] onm_2_rs_y, double[nh_dim,11] onm_3_rs_y, double[nh_dim,11] onm_0_rs_z, double[nh_dim,11] onm_1_rs_z, double[nh_dim,11] onm_2_rs_z, double[nh_dim,11] onm_3_rs_z, int[1] h_dim, int[2,h_dim] ijIdx, output double[m,h_dim4] Omega_x, output double[m,h_dim4] Omega_y, output double[m,h_dim4] Omega_z, output double[m,h_dim4] Omega21, output double[m,h_dim4] Omega22, output double[m,h_dim4] Omega23, output double[m,h_dim4] Omega31, output double[m,h_dim4] Omega32, output double[m,h_dim4] Omega33);
+% end
+% 
+% end
+
+@function A = Lap3dSLPmat_mex(t,s)
+
+r0 = t.x;
+m = numel(r0(1,:));
+r = s.x;
+n = numel(r(1,:));
+w = s.w;
+
+# FORTRAN lap3dslpmat(int[1] m, double[3,m] r0, int[1] n, double[3,n] r, double[n] w, output double[m,n] A);
+
+end
+
+@function A = Lap3dDLPmat_mex(t,s)
+
+r0 = t.x;
+m = numel(r0(1,:));
+r = s.x;
+rn = s.nx;
+n = numel(r(1,:));
+w = s.w;
+
+# FORTRAN lap3ddlpmat(int[1] m, double[3,m] r0, int[1] n, double[3,n] r, double[3,n] rn, double[n] w, output double[m,n] A);
+
+end
+
+
+@function [A11 A12 A13 A22 A23 A33] = Sto3dDLPmat_mex(t,s)
+
+r0 = t.x;
+m = numel(r0(1,:));
+r = s.x;
+rn = s.nx;
+n = numel(r(1,:));
+w = s.w;
+
+# FORTRAN sto3ddlpmat(int[1] m, double[3,m] r0, int[1] n, double[3,n] r, double[3,n] rn, double[n] w, output double[m,n] A11, output double[m,n] A12, output double[m,n] A13, output double[m,n] A22, output double[m,n] A23, output double[m,n] A33);
+
+end
+
+@function [A11 A12 A13 A22 A23 A33 A21 A31 A32] = Sto3dDLPnmat_mex(t,s)
+
+r0 = t.x;
+r0n = t.nx;
+m = numel(r0(1,:));
+r = s.x;
+rn = s.nx;
+n = numel(r(1,:));
+w = s.w;
+
+# FORTRAN sto3ddlpnmat(int[1] m, double[3,m] r0, double[3,m] r0n, int[1] n, double[3,n] r, double[3,n] rn, double[n] w, output double[m,n] A11, output double[m,n] A12, output double[m,n] A13, output double[m,n] A22, output double[m,n] A23, output double[m,n] A33, output double[m,n] A21, output double[m,n] A31, output double[m,n] A32);
+
+end
+
+
+@function [A11 A12 A13 A22 A23 A33] = Sto3dSLPmat_mex(t,s)
+
+r0 = t.x;
+m = numel(r0(1,:));
+r = s.x;
+n = numel(r(1,:));
+w = s.w;
+
+# FORTRAN sto3dslpmat(int[1] m, double[3,m] r0, int[1] n, double[3,n] r, double[n] w, output double[m,n] A11, output double[m,n] A12, output double[m,n] A13, output double[m,n] A22, output double[m,n] A23, output double[m,n] A33);
+
+end
+
+@function [A11 A12 A13 A22 A23 A33] = Sto3dSLPnmat_mex(t,s)
+
+r0 = t.x;
+r0n = t.nx;
+m = numel(r0(1,:));
+r = s.x;
+n = numel(r(1,:));
+w = s.w;
+
+# FORTRAN sto3dslpnmat(int[1] m, double[3,m] r0, double[3,m] r0n, int[1] n, double[3,n] r, double[n] w, output double[m,n] A11, output double[m,n] A12, output double[m,n] A13, output double[m,n] A22, output double[m,n] A23, output double[m,n] A33);
+
+end
+

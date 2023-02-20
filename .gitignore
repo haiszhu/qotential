@@ -1,0 +1,11 @@
+*.DS_Store 
+*.mexmaci64
+*.mexmaca64
+*.mexa64
+*.o
+*.asv
+fort.*
+*.txt
+*.mod
+*.a
+int2*

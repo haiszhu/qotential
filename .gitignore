@@ -9,3 +9,4 @@ fort.*
 *.mod
 *.a
 int2*
+make.inc

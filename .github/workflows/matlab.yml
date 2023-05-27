@@ -1,0 +1,19 @@
+# set up MATLAB on Github-Hosted Runner
+
+name: Run MATLAB Build on GitHub-Hosted Runner
+on: [push]
+jobs:
+  my-job:
+    name: Run MATLAB Build
+    runs-on: [ubuntu-20.04]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - name: Set up MATLAB
+        uses: matlab-actions/setup-matlab@v1
+        with:
+          release: R2022a
+      - name: Install special quad
+        run: cd utils/f; cp make.inc.linux_gcc make.inc; make

@@ -4,3 +4,6 @@
 [submodule "utils/kdtree"]
 	path = utils/kdtree
 	url = https://github.com/taiya/kdtree.git
+[submodule "private"]
+	path = private
+	url = https://github.com/haiszhu/qotential-master.git

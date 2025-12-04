@@ -7,7 +7,6 @@ c     ...
      5                      onm0,onm1,onm2,onm3,Fbd,Fxbd,Fybd,Fzbd,
      6                      Mmatrix,isimd,Aslp,Adlp,Omega)
       implicit none
-      ! Declarations from original code (assumed correct)
       integer *8, intent(in) :: m, n, nterms, iside
       integer *8, intent(in) :: sbdnp, len, nbd, nquad, isimd
       real *8, intent(in) :: tx(3,m), sx(3,n), sw(n), snx(3,n)
@@ -25,8 +24,398 @@ c     ...
       complex *16, intent(inout) :: Fybd(nbd,(nterms+1)*(nterms+1))
       complex *16, intent(inout) :: Fzbd(nbd,(nterms+1)*(nterms+1))
       real *8, intent(inout) :: Mmatrix(4*n,4*n), Omega(4*n,m)
-      real *8, intent(inout) :: Adlp(m,n), Aslp(m,n) 
+      real *8, intent(inout) :: Adlp(m,n), Aslp(m,n)
 
+      real *8 :: o_offset, pi
+      integer *8 :: itype, k, j, ier, korder
+      real *8 :: v(nquad,nquad), vp(nquad,nquad), vpp(nquad,nquad)
+      real *8 :: sx_mean(3)
+      real *8 :: txnew0(3,m), sxnew0(3,n), snxnew0(3,n)
+      real *8 :: vmatr(n,n)
+      real *8 :: lsstep, tpan(sbdnp+1)
+      real *8 :: r1(3), r2(3), r3(3), nc(3), temp
+      real *8 :: txnew(3,m), sxnew(3,n), snxnew(3,n)
+      real *8 :: sx3min, sx3max
+      integer *8 :: idxvec(n), tmpidx, tmpidx2, ij
+      real *8 :: Fbd_real(nbd,n), F1bd(nbd,n), F2bd(nbd,n), F3bd(nbd,n)
+      integer *8 :: morder
+      real *8, allocatable :: m_all_adp(:,:,:), n_all_adp(:,:,:)
+      real *8 :: tglr,tgll,denoml,denomr,xdiffl,xdiffr,templ,tempr
+      real *8 :: rho, rat1(2,nquad)
+      integer *8 :: ell, idx_ell_start, idx_ell_end
+      real *8 :: DglT(nquad,nquad), r_ell(3,nquad), rp(3,nquad),w(nquad)
+      real *8 :: rlr(3,2), rl(3), rr(3), pan_len
+      real *8 :: r0j(3), x0, y0, z0
+      integer *8 :: rfc
+      real *8 :: troot_real, xroot_real, yroot_real, zroot_real
+      real *8 :: r_root(3), sqn_dist
+      integer *8 :: lenj, lenl, lenr, nquad_up
+      real *8, allocatable :: r_up(:,:), rp_up(:,:), Br(:,:), w_up(:)
+      integer *8 :: flag
+      real *8, allocatable :: mk_j_up(:,:), nk_j_up(:,:)
+      real *8 :: mk_j(nquad,nterms+3), nk_j(nquad,nterms+3)
+      integer *8 :: ijIdx(2,n), idx, idx_k_end
+      real *8 :: omega0slp(n,m),omega1slp(n,m),omega2slp(n,m),
+     1           omega3slp(n,m)
+      real *8 :: omega0dlp(n,m),omega1dlp(n,m),omega2dlp(n,m),
+     1           omega3dlp(n,m)
+      complex *16 :: Fc(n,(nterms+1)*(nterms+1))
+      complex *16 :: Fx_c(n,(nterms+1)*(nterms+1))
+      complex *16 :: Fy_c(n,(nterms+1)*(nterms+1))
+      complex *16 :: Fz_c(n,(nterms+1)*(nterms+1))
+      integer *8 :: info
+      real *8 :: F0sx(n,n), F1sx(n,n), F2sx(n,n), F3sx(n,n)
+      real *8 :: MmatrixT(4*n,4*n), Atmp(4*n,m)
+      real *8 :: onm0slp(5,n,nbd), onm1slp(5,n,nbd)
+      real *8 :: onm2slp(5,n,nbd), onm3slp(5,n,nbd)
+      real *8 :: Omega_slp(m,4*n)
+      real *8 :: Amu_c(4*n,n), rhs_basis(4*n,n), dlm_basis(4*n,n)
+      real *8 :: fval_closed_basis(m,n), fval_added_basis(m,n)
+      real *8 :: fval_basis(m,n)
+      real *8 :: dlm_0_basis(n,n), dlm_1_basis(n,n)
+      real *8 :: dlm_2_basis(n,n), dlm_3_basis(n,n)
+      real *8 :: rho_basis(4*n,n), glm_basis(4*n,n)
+
+      pi = 4.0d0*atan(1.0d0)
+      o_offset = 0.063d0
+      hdim = nterms*(nterms+1)/2
+
+      tgl = 0.0d0
+      wgl = 0.0d0
+      Dgl = 0.0d0
+      w_bclag = 0.0d0
+      Legmat = 0.0d0
+      Agl = 0.0d0
+      v = 0.0d0
+      vp = 0.0d0
+      vpp = 0.0d0
+      itype = int(2, KIND=8)
+      call legeexps2(itype,nquad,tgl,Legmat,v,wgl,vp,vpp);
+      call bclaginterpweights(nquad,tgl,w_bclag);
+      Dgl = matmul(vp,Legmat)
+      Agl = 0.0d0
+      Agl(1,:) = 1.0d0
+      do k=2,nquad
+         do j=1,nquad
+            Agl(k,j) = Agl(k-1,j)*tgl(j)
+         end do
+      end do
+      ier = 0
+
+      sx_mean = 0.0d0
+      do k=1,n
+          sx_mean = sx_mean + sx(:,k)
+      end do
+      sx_mean = sx_mean / dble(n)
+      alpha = 1.25d0 / sqrt(sum(sw)*2.0d0)
+      do k=1,m
+         txnew0(1,k) = alpha*(tx(1,k)-sx_mean(1))
+         txnew0(2,k) = alpha*(tx(2,k)-sx_mean(2))
+         txnew0(3,k) = alpha*(tx(3,k)-sx_mean(3))
+      end do
+      do k=1,n
+         sxnew0(1,k) = alpha*(sx(1,k)-sx_mean(1))
+         sxnew0(2,k) = alpha*(sx(2,k)-sx_mean(2))
+         sxnew0(3,k) = alpha*(sx(3,k)-sx_mean(3))
+      end do
+      snxnew0 = snx
+
+      korder = nterms-1
+      vmatr = 0.0d0
+      umatr = 0.0d0
+      call koorn_vals2coefs_coefs2vals(korder,n,umatr,vmatr)
+
+      lsstep = 2*pi/sbdnp
+      tpan = 0.0d0
+      do k=1,sbdnp+1
+        tpan(k) = (k-1)*lsstep
+      enddo
+      sxbd = 0.0d0
+      swbd = 0.0d0
+      stangbd = 0.0d0
+      sspbd = 0.0d0
+      r_vert = 0.0d0
+      call line3quadr_3dline(sxnew0, korder, n, umatr, 
+     1                  nquad, tgl, wgl, Dgl, sbdnp, tpan, nbd, 
+     2                  sxbd, swbd, stangbd, sspbd, r_vert)
+
+      r1 = r_vert(:,1)
+      r2 = r_vert(:,2)
+      r3 = r_vert(:,3)
+      nc(1) = (r2(2)-r1(2))*(r3(3)-r1(3)) - (r2(3)-r1(3))*(r3(2)-r1(2))
+      nc(2) = (r2(3)-r1(3))*(r3(1)-r1(1)) - (r2(1)-r1(1))*(r3(3)-r1(3))
+      nc(3) = (r2(1)-r1(1))*(r3(2)-r1(2)) - (r2(2)-r1(2))*(r3(1)-r1(1))
+      temp = sqrt(nc(1)**2 + nc(2)**2 + nc(3)**2)
+      if (temp .gt. 0.0d0) nc = nc/temp
+      sxnew = 0.0d0
+      call transformedsx(r_vert,n,sxnew0,sxnew);
+      if (iside .eq. 0) then 
+         sx3min = max(abs(minval(sxnew(3,:))),o_offset)
+         do j=1,3
+            do k=1,3
+               r_vert(j,k) = r_vert(j,k) - 4.25d0*sx3min*nc(j)
+            end do
+         end do
+      else if (iside .eq. 1) then 
+         sx3max = max(abs(maxval(sxnew(3,:))),o_offset)
+         do j=1,3
+            do k=1,3
+               r_vert(j,k) = r_vert(j,k) + 4.25d0*sx3max*nc(j)
+            end do
+         end do
+      end if
+
+      snxnew0 = snx
+      call transformedsxsnxtx(r_vert,n,sxnew0,snxnew0,m,txnew0)
+      sxnew = sxnew0
+      snxnew = snxnew0
+      txnew = txnew0
+
+      call line3quadr_3dline(sxnew, korder, n, umatr, nquad, tgl, wgl, 
+     1      Dgl, sbdnp, tpan, nbd, sxbd, swbd, stangbd, sspbd, r_vert)
+
+      idxvec = 0
+      tmpidx = 0
+      tmpidx2 = 0
+      do ij = 0,nterms
+        do k = -ij,ij
+          tmpidx2 = tmpidx2 + 1
+          if ((ij.gt.0).and.(k.gt.0)) then
+            tmpidx = tmpidx + 1
+            idxvec(tmpidx) = tmpidx2
+          endif
+        enddo
+      enddo
+
+      Omega = 0.0d0
+      Adlp = 0.0d0
+      Aslp = 0.0d0
+      Fbd = CMPLX((0.0d0, 0.0d0), KIND=16)
+      Fxbd = CMPLX((0.0d0, 0.0d0), KIND=16)
+      Fybd = CMPLX((0.0d0, 0.0d0), KIND=16)
+      Fzbd = CMPLX((0.0d0, 0.0d0), KIND=16)
+      call l3dtavecevalmatf(sxbd,nbd,nterms,Fbd,Fxbd,Fybd,Fzbd,ier)
+      do k = 1,n
+        Fbd_real(:,k) = dble(Fbd(:,idxvec(k)))
+        F1bd(:,k) = dble(Fxbd(:,idxvec(k)))
+        F2bd(:,k) = dble(Fybd(:,idxvec(k)))
+        F3bd(:,k) = dble(Fzbd(:,idxvec(k)))
+      enddo
+
+      onm0slp = 0.0d0
+      onm1slp = 0.0d0
+      onm2slp = 0.0d0
+      onm3slp = 0.0d0
+      onm0 = 0.0d0
+      onm1 = 0.0d0
+      onm2 = 0.0d0
+      onm3 = 0.0d0
+      call omeganmslp_precomp(nbd,hdim,Fbd_real,F1bd,F2bd,F3bd,
+     1     sxbd,stangbd,swbd,onm0slp,onm1slp,onm2slp,onm3slp,
+     2     onm0,onm1,onm2,onm3)
+
+      morder = nterms+3
+      allocate( m_all_adp(morder,nbd,m))
+      allocate( n_all_adp(morder,nbd,m))
+      m_all_adp = 0.0d0
+      n_all_adp = 0.0d0
+
+      tglr =  1.0d0
+      tgll = -1.0d0
+      bclagmatlr = 0.0d0
+      denoml = 0.0d0
+      denomr = 0.0d0
+      do j=1,nquad
+        xdiffl = tgll-tgl(j)
+        xdiffr = tglr-tgl(j)
+        templ = w_bclag(j)/xdiffl
+        tempr = w_bclag(j)/xdiffr
+        bclagmatlr(j,1) = templ
+        bclagmatlr(j,2) = tempr
+        denoml = denoml + templ
+        denomr = denomr + tempr
+      enddo
+      denoml = 1.0D0/denoml
+      denomr = 1.0D0/denomr
+      bclagmatlr(:,1) = bclagmatlr(:,1) * denoml
+      bclagmatlr(:,2) = bclagmatlr(:,2) * denomr
+
+      rho = 4.0d0**(16.0d0/dble(nquad))
+      rat1 = 0.0d0
+      call legendrescalarf_init(nquad-1,rat1)
+      DglT = transpose(Dgl)
+      do ell = 1,sbdnp
+        idx_ell_start = (ell-1)*nquad + 1
+        idx_ell_end = ell*nquad
+        r_ell = sxbd(:, idx_ell_start:idx_ell_end)
+        rp = matmul(r_ell,DglT)
+        w = sqrt(rp(1,:)*rp(1,:)+rp(2,:)*rp(2,:)+rp(3,:)*rp(3,:))*wgl
+        rlr = matmul(r_ell,bclagmatlr)
+        rl = rlr(:,1)
+        rr = rlr(:,2)
+        pan_len = sum(w)
+        do j = 1,m
+          r0j = txnew(:, j)
+          x0 = r0j(1)
+          y0 = r0j(2)
+          z0 = r0j(3)
+          rfc = int(0, KIND=8)
+          troot_real = 0.0d0
+          xroot_real = 0.0d0
+          yroot_real = 0.0d0
+          zroot_real = 0.0d0
+          call line3nearrootf_real(tgl, Agl, Legmat, wgl, 
+     1   r_ell(1,:), r_ell(2,:), r_ell(3,:), nquad, x0, y0, z0, 
+     2   rho, rfc, troot_real, xroot_real, yroot_real, zroot_real, rat1)
+
+          if (rfc>0) then
+            r_root(1) = xroot_real
+            r_root(2) = yroot_real
+            r_root(3) = zroot_real
+            sqn_dist = 0.0d0
+            lenj = int(0, KIND=8)
+            lenl = int(0, KIND=8)
+            lenr = int(0, KIND=8)
+            call lenofpantendforsaf(nquad,tgl,wgl,r_ell,rr,rl,r0j,
+     1              troot_real,r_root,w_bclag,Dgl,sqn_dist,
+     2              pan_len,lenj,lenl,lenr,rp,w)
+            nquad_up = nquad*(lenj-1)
+            allocate(r_up(3,nquad_up),rp_up(3,nquad_up))
+            allocate(Br(nquad,nquad_up),w_up(nquad_up))
+            r_up = 0.0d0
+            rp_up = 0.0d0
+            Br = 0.0d0
+            w_up = 0.0d0
+            call line3adaptivernearr0forsaf(troot_real, nquad, tgl, wgl, 
+     1              r_ell, w_bclag, lenj, lenl, lenr, rp, w, nquad_up, 
+     2              r_up, rp_up, Br, w_up)
+            flag = int(0, KIND=8)
+            allocate(mk_j_up(nquad_up,morder))
+            allocate(nk_j_up(nquad_up,morder))
+            mk_j_up = 0.0d0
+            nk_j_up = 0.0d0
+            call momentsad_vr(r0j, nquad_up, r_up, nterms+2, flag, 
+     1              nk_j_up, mk_j_up)
+            mk_j = matmul(Br, mk_j_up)
+            nk_j = matmul(Br, nk_j_up)
+
+            deallocate(r_up,rp_up)
+            deallocate(Br,w_up)
+            deallocate(mk_j_up)
+            deallocate(nk_j_up)
+          else
+            flag = int(0, KIND=8)
+            mk_j = 0.0d0 
+            nk_j = 0.0d0
+            call momentsad_vr(r0j, nquad, r_ell, nterms+2, flag, 
+     1              nk_j, mk_j)
+          end if  
+          m_all_adp(1:morder,idx_ell_start:idx_ell_end,j) = 
+     1              transpose(mk_j)
+          n_all_adp(1:morder,idx_ell_start:idx_ell_end,j) = 
+     1              transpose(nk_j)
+        enddo
+      enddo
+
+      ijIdx = int(0, KIND=8)
+      idx = int(1, KIND=8)
+      do k=1,nterms
+        idx_k_end = idx + k - 1
+        ijIdx(1, idx:idx_k_end) = ijIdx(1, idx:idx_k_end) + (k - 1)
+        idx = idx + k
+      enddo
+      omega0slp = 0.0d0
+      omega1slp = 0.0d0
+      omega2slp = 0.0d0
+      omega3slp = 0.0d0
+      omega0dlp = 0.0d0
+      omega1dlp = 0.0d0
+      omega2dlp = 0.0d0
+      omega3dlp = 0.0d0
+      call omegasdlpall0123vrnewf(m, txnew, n_all_adp, m_all_adp, nbd, 
+     1    nterms, morder, onm0slp, onm1slp, onm2slp, onm3slp, 
+     2    onm0, onm1, onm2, onm3, hdim, ijIdx, omega0slp, omega1slp, 
+     3    omega2slp, omega3slp, omega0dlp, omega1dlp, omega2dlp, 
+     4    omega3dlp)
+
+      Omega_slp = 0.0d0
+      do k=1,n
+         Omega_slp(:,k) = -omega0slp(k,:)/alpha
+         Omega_slp(:,n+k) = omega1slp(k,:)/alpha
+         Omega_slp(:,2*n+k) = omega2slp(k,:)/alpha
+         Omega_slp(:,3*n+k) = omega3slp(k,:)/alpha
+      enddo
+
+      do k=1,m
+         Omega(1:n,k) = omega0dlp(1:n,k)
+         Omega(n+1:2*n,k) = -omega1dlp(1:n,k)
+         Omega(2*n+1:3*n,k) = -omega2dlp(1:n,k)
+         Omega(3*n+1:4*n,k) = -omega3dlp(1:n,k)
+      end do
+
+      Fc = (0.0d0,0.0d0)
+      Fx_c = (0.0d0,0.0d0)
+      Fy_c = (0.0d0,0.0d0)
+      Fz_c = (0.0d0,0.0d0)
+      info = 0
+      call l3dtavecevalmatf(sxnew, n, nterms, Fc, Fx_c, Fy_c, Fz_c,info)
+
+      F0sx = 0.0d0
+      do k=1,hdim
+        F0sx(:,k) = dble(Fc(:,idxvec(k)))
+        F1sx(:,k) = dble(Fx_c(:,idxvec(k)))
+        F2sx(:,k) = dble(Fy_c(:,idxvec(k)))
+        F3sx(:,k) = dble(Fz_c(:,idxvec(k)))
+      end do
+      Mmatrix = 0.0d0
+      Mmatrix(1:n,(hdim+1):(2*hdim)) = -F1sx
+      Mmatrix(1:n,(2*hdim+1):(3*hdim)) = -F2sx
+      Mmatrix(1:n,(3*hdim+1):(4*hdim)) = -F3sx
+      Mmatrix((n+1):(2*n),1:hdim) = F1sx
+      Mmatrix((n+1):(2*n),(2*hdim+1):(3*hdim)) = -F3sx
+      Mmatrix((n+1):(2*n),(3*hdim+1):(4*hdim)) = F2sx
+      Mmatrix((2*n+1):(3*n),1:hdim) = F2sx
+      Mmatrix((2*n+1):(3*n),(hdim+1):(2*hdim)) = F3sx
+      Mmatrix((2*n+1):(3*n),(3*hdim+1):(4*hdim)) = -F1sx
+      Mmatrix((3*n+1):(4*n),1:hdim) = F3sx
+      Mmatrix((3*n+1):(4*n),(hdim+1):(2*hdim)) = -F2sx
+      Mmatrix((3*n+1):(4*n),(2*hdim+1):(3*hdim)) = F1sx
+
+      MmatrixT = transpose(Mmatrix)
+      Atmp = Omega
+      call dgausselimvec(4*n,MmatrixT,m,Atmp,info)
+      Adlp = transpose(Atmp(1:n,:))
+
+      Amu_c = 0.0d0
+      do k=1,n
+         Amu_c(n+k,k) = snxnew(1,k)
+         Amu_c(2*n+k,k) = snxnew(2,k)
+         Amu_c(3*n+k,k) = snxnew(3,k)
+      enddo
+
+      dlm_basis = matmul(Amu_c,vmatr)
+      call dgausselimvec(4*n,Mmatrix,n,dlm_basis,info)
+
+      fval_closed_basis = matmul(Omega_slp,dlm_basis)
+      dlm_0_basis = transpose(dlm_basis(1:n,:))
+      dlm_1_basis = transpose(dlm_basis(n+1:2*n,:))
+      dlm_2_basis = transpose(dlm_basis(2*n+1:3*n,:))
+      dlm_3_basis = transpose(dlm_basis(3*n+1:4*n,:))
+
+      rho_basis = 0.0d0
+      rho_basis(1:n,:) = -matmul(F0sx,dlm_0_basis)
+      rho_basis(n+1:2*n,:) = -matmul(F0sx,dlm_1_basis)
+      rho_basis(2*n+1:3*n,:) = -matmul(F0sx,dlm_2_basis)
+      rho_basis(3*n+1:4*n,:) = -matmul(F0sx,dlm_3_basis)
+
+      glm_basis = rho_basis
+      call dgausselimvec(4*n,Mmatrix,n,glm_basis,info)
+      fval_added_basis = matmul(transpose(Omega),glm_basis)
+      fval_basis = fval_closed_basis - fval_added_basis/alpha
+      Aslp = matmul(fval_basis,umatr)
+
+      deallocate( m_all_adp )
+      deallocate( n_all_adp )
 
       end subroutine Lap3dSLP_closepaneladp_vr
 

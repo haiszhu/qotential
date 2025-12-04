@@ -1,3 +1,35 @@
+c     ... 
+      subroutine Lap3dSLP_closepaneladp_vr(m,tx,nterms,
+     1                      n,sx,sw,snx,umatr,iside,hdim,
+     2                      alpha,sxc,r_vert,
+     3                      sbdnp,len,nbd,nquad,sxbd,stangbd,swbd,sspbd,
+     4                      tgl,wgl,w_bclag,Dgl,Agl,Legmat,bclagmatlr,
+     5                      onm0,onm1,onm2,onm3,Fbd,Fxbd,Fybd,Fzbd,
+     6                      Mmatrix,isimd,Aslp,Adlp,Omega)
+      implicit none
+      ! Declarations from original code (assumed correct)
+      integer *8, intent(in) :: m, n, nterms, iside
+      integer *8, intent(in) :: sbdnp, len, nbd, nquad, isimd
+      real *8, intent(in) :: tx(3,m), sx(3,n), sw(n), snx(3,n)
+      integer *8, intent(inout) :: hdim
+      real *8, intent(inout) :: umatr(n,n), alpha, sxc(3), r_vert(3,3)
+      real *8, intent(inout) :: sxbd(3,nbd), stangbd(3,nbd)
+      real *8, intent(inout) :: swbd(nbd), sspbd(nbd)
+      real *8, intent(inout) :: tgl(nquad), wgl(nquad), w_bclag(nquad)
+      real *8, intent(inout) :: Dgl(nquad,nquad), Agl(nquad,nquad)
+      real *8, intent(inout) :: Legmat(nquad,nquad), bclagmatlr(nquad,2)
+      real *8, intent(inout) :: onm0(4,n,nbd), onm1(4,n,nbd)
+      real *8, intent(inout) :: onm2(4,n,nbd), onm3(4,n,nbd)
+      complex *16, intent(inout) :: Fbd(nbd,(nterms+1)*(nterms+1))
+      complex *16, intent(inout) :: Fxbd(nbd,(nterms+1)*(nterms+1))
+      complex *16, intent(inout) :: Fybd(nbd,(nterms+1)*(nterms+1))
+      complex *16, intent(inout) :: Fzbd(nbd,(nterms+1)*(nterms+1))
+      real *8, intent(inout) :: Mmatrix(4*n,4*n), Omega(4*n,m)
+      real *8, intent(inout) :: Adlp(m,n), Aslp(m,n) 
+
+
+      end subroutine Lap3dSLP_closepaneladp_vr
+
 c     omega_all fun again... 
       subroutine omegasdlpall0123vrnewf(m, tx, n_all, m_all, nbd,nterms,    
      1               morder, onm0slp, onm1slp, onm2slp, onm3slp, 

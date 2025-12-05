@@ -1,3 +1,64 @@
+      ! -----------------------------------------------------------------
+      subroutine Lap3dSLP_closepaneladp_vr_guru(m,tx,
+     1                                     n,sx,sw,snx,iside,Aslp,Adlp)
+      implicit none
+      integer *8, intent(in) :: m, n, iside
+      real *8, intent(in) :: tx(3,m), sx(3,n), sw(n), snx(3,n)
+      real *8, intent(inout) :: Aslp(m,n), Adlp(m,n)
+      ! 
+      integer *8 :: sbdnp, len, nbd, nquad, isimd
+      integer *8 :: hdim, nterms
+      real *8 :: umatr(n,n), alpha, sxc(3), r_vert(3,3)
+      real *8 :: Mmatrix(4*n,4*n), Omega(4*n,m)
+      ! 
+      real *8, allocatable :: sxbd(:,:), stangbd(:,:)
+      real *8, allocatable :: swbd(:), sspbd(:)
+      real *8, allocatable :: tgl(:), wgl(:), w_bclag(:)
+      real *8, allocatable :: Dgl(:,:), Agl(:,:)
+      real *8, allocatable :: Legmat(:,:), bclagmatlr(:,:)
+      real *8, allocatable :: onm0(:,:,:), onm1(:,:,:)
+      real *8, allocatable :: onm2(:,:,:), onm3(:,:,:)
+      complex *16, allocatable :: Fbd(:,:)
+      complex *16, allocatable :: Fxbd(:,:), Fybd(:,:), Fzbd(:,:)
+      
+      ! 
+      nterms = int(sqrt(dble(1+8*n)) + 0.5d0, kind=8)
+      nterms = (nterms - 1)/2
+      alpha = 0
+      isimd = 0
+      nquad = nterms+8
+      len = 3
+      sbdnp = 3*len
+      nbd = sbdnp*nquad
+      ! 
+      allocate(sxbd(3,nbd), stangbd(3,nbd))
+      allocate(swbd(nbd), sspbd(nbd))
+      allocate(tgl(nquad), wgl(nquad), w_bclag(nquad))
+      allocate(Dgl(nquad,nquad), Agl(nquad,nquad))
+      allocate(Legmat(nquad,nquad), bclagmatlr(nquad,2))
+      allocate(onm0(4,n,nbd), onm1(4,n,nbd))
+      allocate(onm2(4,n,nbd), onm3(4,n,nbd))
+      allocate(Fbd(nbd,(nterms+1)*(nterms+1)))
+      allocate(Fxbd(nbd,(nterms+1)*(nterms+1)))
+      allocate(Fybd(nbd,(nterms+1)*(nterms+1)))
+      allocate(Fzbd(nbd,(nterms+1)*(nterms+1)))
+      call Lap3dSLP_closepaneladp_vr(m,tx,nterms,
+     1                      n,sx,sw,snx,umatr,iside,hdim,
+     2                      alpha,sxc,r_vert,
+     3                      sbdnp,len,nbd,nquad,sxbd,stangbd,swbd,sspbd,
+     4                      tgl,wgl,w_bclag,Dgl,Agl,Legmat,bclagmatlr,
+     5                      onm0,onm1,onm2,onm3,Fbd,Fxbd,Fybd,Fzbd,
+     6                      Mmatrix,isimd,Aslp,Adlp,Omega)
+
+      deallocate(sxbd, stangbd)
+      deallocate(swbd, sspbd)
+      deallocate(tgl, wgl, w_bclag)
+      deallocate(Dgl, Agl)
+      deallocate(Legmat, bclagmatlr)
+      deallocate(onm0, onm1, onm2, onm3)
+      deallocate(Fbd, Fxbd, Fybd, Fzbd)
+      end subroutine Lap3dSLP_closepaneladp_vr_guru
+
 c     ... 
       subroutine Lap3dSLP_closepaneladp_vr(m,tx,nterms,
      1                      n,sx,sw,snx,umatr,iside,hdim,
@@ -397,10 +458,10 @@ c     ...
       call dgausselimvec(4*n,Mmatrix,n,dlm_basis,info)
 
       fval_closed_basis = matmul(Omega_slp,dlm_basis)
-      dlm_0_basis = transpose(dlm_basis(1:n,:))
-      dlm_1_basis = transpose(dlm_basis(n+1:2*n,:))
-      dlm_2_basis = transpose(dlm_basis(2*n+1:3*n,:))
-      dlm_3_basis = transpose(dlm_basis(3*n+1:4*n,:))
+      dlm_0_basis = (dlm_basis(1:n,:))
+      dlm_1_basis = (dlm_basis(n+1:2*n,:))
+      dlm_2_basis = (dlm_basis(2*n+1:3*n,:))
+      dlm_3_basis = (dlm_basis(3*n+1:4*n,:))
 
       rho_basis = 0.0d0
       rho_basis(1:n,:) = -matmul(F0sx,dlm_0_basis)
@@ -509,8 +570,8 @@ c             basis count increases
 
       end subroutine omegasdlpall0123vrnewf
 
-      
-c     Precompute onm tensors for SLP/DLP
+
+c     Precompute onm tensors (fast coef version)
       subroutine omeganmslp_precompff(nbd, hdim, F, F1, F2, F3,
      1     sxbd, stangbd, swbd, onm0slp, onm1slp, onm2slp, onm3slp,
      2     onm0dlp, onm1dlp, onm2dlp, onm3dlp)

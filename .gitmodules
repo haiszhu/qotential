@@ -7,3 +7,6 @@
 [submodule "private"]
 	path = private
 	url = https://github.com/haiszhu/qotential-master.git
+[submodule "external/LineQuaaadrature"]
+	path = external/LineQuaaadrature
+	url = https://github.com/haiszhu/LineQuaaadrature

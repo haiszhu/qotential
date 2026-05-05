@@ -24,8 +24,10 @@ s = get_high_order_quad(r,p);
 sf = get_high_order_quad(r,50*p); % upsampled 
 
 % define close targets (num 27419) & density function
-tmp = sqrt(sum(s.w))*(rand(3,100000)-1/2);
-t.x = mean(s.x,2) + [1.25/3*tmp(1:2,:);1.25*tmp(3,:)]; % random targets
+% tmp = sqrt(sum(s.w))*(rand(3,100000)-1/2);
+tmp = sqrt(sum(s.w))*(rand(3,10000)-1/2);
+t.x = mean(s.x,2) + [1.25/3*tmp(1:2,:);1.25/2*tmp(3,:)]; % random targets
+t.x = 2*t.x;
 t.x = t.x + rc; t.x = t.x(:,phi(t.x(1,:),t.x(2,:),t.x(3,:))) - rc;
 fmu = @(x,y,z) sin(3*x)+cos(2*y)+sin(z+1/2)+x.^2+y.^3+z.^4+exp(x.*y.*z);
 
@@ -45,7 +47,7 @@ title("naive eval: max abs err " + max(err) + " ")
 
 %%% close evaluation quadrature error
 % close eval quadr
-[Ac,r] = Lap3dDLP_closepanel_demo(t,s,0,ref);
+[Ac,r] = Lap3dDLP_closepanel_demo(t,s,1,ref);
 % Ac = Lap3dDLP_closepanel_demo(t,s,1);
 % Ac = Lap3dDLP_closepanel(t,s,'e');
 uc = Ac*fmu(s.x(1,:),s.x(2,:),s.x(3,:))';  
@@ -119,7 +121,11 @@ if ~if_adapt
   M_all = momentsallplain_mex(r0,r,order,sbd.np,sbd.p);
   % M_all = momentsallplain(r0,r,order,sbd.np,sbd.p); % here to count flops
 else
-  M_all = momentsalladapt(r0,r,order,sbd.np,sbd.p);
+  % M_all = momentsalladapt(r0,r,order,sbd.np,sbd.p);
+  m = size(r0,2); nbd = size(r,2); ncol = 2*order+2;
+  M_all = zeros(nbd,ncol,m);
+  M_all = lqs_eval_moments_funvals_mex(m, r0, nbd, sbd.x, sbd.p, order, ncol, M_all);
+  
 end
 % omega^nm with moments (target dependent part)
 Omega_all = omegaall_mex(r0,M_all,order,reshape(onm_0,[],4),reshape(onm_1,[],4),reshape(onm_2,[],4),reshape(onm_3,[],4),h_dim,ijIdx);

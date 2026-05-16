@@ -1,12 +1,18 @@
 [submodule "utils/FMM3D"]
 	path = utils/FMM3D
 	url = https://github.com/flatironinstitute/FMM3D.git
+	ignore = all
 [submodule "utils/kdtree"]
 	path = utils/kdtree
 	url = https://github.com/taiya/kdtree.git
+	ignore = all
 [submodule "private"]
 	path = private
 	url = https://github.com/haiszhu/qotential-master.git
+	ignore = all
 [submodule "external/LineQuaaadrature"]
 	path = external/LineQuaaadrature
 	url = https://github.com/haiszhu/LineQuaaadrature
+[submodule "external/QuatApproximation"]
+	path = external/QuatApproximation
+	url = https://github.com/haiszhu/QuatApproximation

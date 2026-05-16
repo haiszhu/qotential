@@ -1,0 +1,48 @@
+% qotential.mw
+% mwrap interface for the qotential BIE-solver glue layer.
+% Generated mex file: matlab/qotential_mex.<EXT>
+%
+% Build flags (from top-level Makefile): mwrap -c99complex -i8 -mex
+% After generation: perl -pi -e 's/_{2,}/_/g' qotential_mex.c
+%
+% ============================================================
+% mwrap syntax:
+%
+%   @function [inout1, inout2] = SubroutineName_mex(in1, in2, inout1, inout2)
+%   % optional MATLAB pre-processing (reshape etc.)
+%   # FORTRAN SubroutineName(type[dims] in1, type[dims] in2, inout type[dims] inout1, inout type[dims] inout2);
+%   end
+%
+% Convention: inout variables appear on BOTH sides of the MATLAB call.
+% This keeps Fortran and MATLAB calling sequences exactly the same.
+% type keywords: int, double, dcomplex
+% dims: [1] scalar, [n] vector, [3,n] array (col-major)
+% ============================================================
+
+% --------------------------------------------------------------------------
+% qol_lap3ddlp_closepanel_mex
+% Close-evaluation Laplace DLP matrix Ac for one tensor-product source patch
+% and an arbitrary set of close targets.  Single-precision r64 path.
+%
+% MATLAB-facing signature:
+%   Ac = qol_lap3ddlp_closepanel_mex(t, s, order, ref, if_adapt)
+%
+% where t.x is (3, m_tgt), s.x is (3, npat), npat = order^2,
+% order is the surface tensor order, ref the panel refinement factor.
+% if_adapt = true selects the adaptive moments path (currently the only
+% one implemented in Lap3dDLP_closepanel_r64).
+%
+% Output:
+%   Ac (m_tgt, npat)  close-eval matrix
+% --------------------------------------------------------------------------
+@function [Ac] = qol_lap3ddlp_closepanel_mex(t, s, order, ref, if_adapt)
+t_x        = double(reshape(t.x, 3, []));
+s_x        = double(reshape(s.x, 3, []));
+m_tgt      = size(t_x, 2);
+npat       = size(s_x, 2);
+order      = double(order);
+ref        = double(ref);
+if_adapt_d = double(logical(if_adapt));
+Ac         = zeros(m_tgt, npat);
+# FORTRAN qol_lap3ddlp_closepanel_mex(int[1] m_tgt, double[3,m_tgt] t_x, int[1] npat, double[3,npat] s_x, int[1] order, int[1] ref, double[1] if_adapt_d, inout double[m_tgt,npat] Ac);
+end

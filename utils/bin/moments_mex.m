@@ -8,7 +8,7 @@ flag = double(nargout); % crucial even though it's int type in Fortran
 % since Nk Mk has type 'output' of given size, no MATLAB preallocation is needed
 % Code for calling the Fortran function
 orderp1 = order + 1; r0 = r0'; r = r';
-mex_id_ = 'moments(i double[x], i int, i double[xx], i int, i int, o double[xx], o double[xx])';
+mex_id_ = 'moments(c i double[x], c i int, c i double[xx], c i int, c i int, c o double[xx], c o double[xx])';
 [Nk, Mk] = specialquad(mex_id_, r0, N, r, order, flag, 3, N, 3, N, orderp1, N, orderp1);
 
 end

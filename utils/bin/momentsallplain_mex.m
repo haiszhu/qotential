@@ -5,7 +5,7 @@ m = numel(r0(1,:));
 n = numel(r(1,:));
 dim1 = n*(2*order+2);
 
-mex_id_ = 'momentsallplain(i int[x], i double[xx], i int[x], i double[xx], i int[x], i int[x], i int[x], i int[x], o double[xx])';
+mex_id_ = 'momentsallplain(c i int[x], c i double[xx], c i int[x], c i double[xx], c i int[x], c i int[x], c i int[x], c i int[x], c o double[xx])';
 [m_all] = specialquad(mex_id_, m, r0, n, r, order, np, p, dim1, 1, 3, m, 1, 3, n, 1, 1, 1, 1, dim1, m);
 
 m_all = reshape(m_all,n,2*order+2,m);

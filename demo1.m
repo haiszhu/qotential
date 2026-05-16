@@ -8,6 +8,8 @@ setup()
 profile clear
 profile on
 
+addpath('/Users/hzhu/Documents/Github/qotential/matlab')
+
 % order
 p = 8; % try <= 14, before condition number kicks in
 ref = 1; % 1, 2, 3, 4...
@@ -33,7 +35,7 @@ fmu = @(x,y,z) sin(3*x)+cos(2*y)+sin(z+1/2)+x.^2+y.^3+z.^4+exp(x.*y.*z);
 
 %%% naive quadrature error
 % naive quadr
-A = Lap3dDLPmat_mex(t,s);
+A = Lap3dDLPmat(t,s);
 u = A*fmu(s.x(1,:),s.x(2,:),s.x(3,:))';  
 % upsampled quadr (this is 10 digit reference soln)
 uf = Lap3dDLPfmm(t,sf,fmu(sf.x(1,:),sf.x(2,:),sf.x(3,:))',1e-13);
@@ -47,9 +49,8 @@ title("naive eval: max abs err " + max(err) + " ")
 
 %%% close evaluation quadrature error
 % close eval quadr
-[Ac,r] = Lap3dDLP_closepanel_demo(t,s,1,ref);
-% Ac = Lap3dDLP_closepanel_demo(t,s,1);
-% Ac = Lap3dDLP_closepanel(t,s,'e');
+Ac = qol_lap3ddlp_closepanel_mex(t, s, sqrt(size(s.x, 2)), ref, true);
+% [Ac,r] = Lap3dDLP_closepanel_demo(t,s,1,ref);
 uc = Ac*fmu(s.x(1,:),s.x(2,:),s.x(3,:))';  
 % error
 err2 = abs(uc-uf)/max(abs(uf(:)));
@@ -64,119 +65,6 @@ plot3(r(1,:),r(2,:),r(3,:),'.k-')
 profile viewer
 
 keyboard
-
-function [A,r] = Lap3dDLP_closepanel_demo(t,s,if_adapt,ref)
-% close eval matrix, everything on-the-fly
-%
-% 
-% Hai 02/20/23 
-
-if nargin < 3, if_adapt = 0; end
-if nargin < 4, ref = 1; end
-
-% assume tensor product grid
-order = sqrt(numel(s.x(1,:)));
-
-% geometric process: shift, rescale, set origin, etc...
-% compute length of pank "roughtly", and overwrite pank.x
-sbd = []; sbd.p = ref*order; sbd.tpan = linspace(0,2*pi,9);
-sbd.x_uvs_qntype = 'T';
-sbd.xvr = s.x; 
-sbd = quadr_3dline(sbd, [], 'G');
-sx = s.x; %
-r0 = t.x; %
-r = sbd.x;
-rtau = sbd.tang;
-
-% set up interpolation matrix
-[gradF,~] = evaltensorproductharmonicgrad_mex(sx,order);
-h_dim = order^2;
-n = numel(sx(:))/3;
-Amu_c = [speye(n);sparse(3*n,n)];
-F0 = zeros(h_dim); F1 = gradF.F1; F2 = gradF.F2; F3 = gradF.F3;
-Mmatrix = [[ F0 -F1 -F2 -F3];...
-           [ F1  F0 -F3  F2];...
-           [ F2  F3  F0 -F1];...
-           [ F3 -F2  F1  F0]];  % form approximation matrix explicitly once per patch
-
-% evaluate basis at boundary nodes (to be multiplied by moments)
-dx = rtau(1,:).*sbd.w; dy = rtau(2,:).*sbd.w; dz = rtau(3,:).*sbd.w;
-[gradFbd,ijIdx] = evaltensorproductharmonicgrad_mex(r,order);   % harmonic gradient
-
-% q^nm without kernel denominator
-[qnm_0_1,qnm_0_2,qnm_0_3] = qnm_i(r,gradFbd,0);
-[qnm_1_1,qnm_1_2,qnm_1_3] = qnm_i(r,gradFbd,1);
-[qnm_2_1,qnm_2_2,qnm_2_3] = qnm_i(r,gradFbd,2);
-[qnm_3_1,qnm_3_2,qnm_3_3] = qnm_i(r,gradFbd,3);
-
-% omega^nm without kernel denominator
-dr = [dx;dy;dz];
-onm_0 = omeganm_i(r,dr,qnm_0_1,qnm_0_2,qnm_0_3);
-onm_1 = omeganm_i(r,dr,qnm_1_1,qnm_1_2,qnm_1_3);
-onm_2 = omeganm_i(r,dr,qnm_2_1,qnm_2_2,qnm_2_3);
-onm_3 = omeganm_i(r,dr,qnm_3_1,qnm_3_2,qnm_3_3);
-
-% moments (target dependent part)
-if ~if_adapt
-  M_all = momentsallplain_mex(r0,r,order,sbd.np,sbd.p);
-  % M_all = momentsallplain(r0,r,order,sbd.np,sbd.p); % here to count flops
-else
-  % M_all = momentsalladapt(r0,r,order,sbd.np,sbd.p);
-  m = size(r0,2); nbd = size(r,2); ncol = 2*order+2;
-  M_all = zeros(nbd,ncol,m);
-  M_all = lqs_eval_moments_funvals_mex(m, r0, nbd, sbd.x, sbd.p, order, ncol, M_all);
-  
-end
-% omega^nm with moments (target dependent part)
-Omega_all = omegaall_mex(r0,M_all,order,reshape(onm_0,[],4),reshape(onm_1,[],4),reshape(onm_2,[],4),reshape(onm_3,[],4),h_dim,ijIdx);
-
-% backwards-stable solve
-warning('off','MATLAB:nearlySingularMatrix'); 
-A = (Mmatrix'\Omega_all')'*Amu_c; % solve for special weights...
-
-end
-
-function M_all = momentsalladapt(r0,r,order,np,p)
-% adaptive rule
-
-rho = 4^(16/p);
-[tj,wj,D0] = gauss(p);
-w_bclag = bclag_interp_weights(tj);
-Legmat = legendre.matrix(p); % for legendre coefficients
-sqn_flag = false(np,numel(r0(1,:))); 
-r_root = NaN(np,3,numel(r0(1,:))); t_root = NaN(np,numel(r0(1,:)));
-rf_mex_flag = true; % rootfinder mex file flag
-for ell = 1:np % loop over patch, find close targets, store
-  idx_ell = (ell-1)*p + (1:p);
-  r_ell = r(:,idx_ell);
-  % find nearest pts on edge (designed to handle multiple targets)
-  [sqn_idx_tmp,r_root_tmp,t_root_tmp] = line3_near_r0(tj, r_ell, r0, rho, Legmat,rf_mex_flag);
-  % store roots info
-  sqn_flag(ell,sqn_idx_tmp) = true;
-  r_root(ell,:,sqn_idx_tmp) = r_root_tmp; t_root(ell,sqn_idx_tmp) = t_root_tmp;
-end
-[~,M_all] = momentsall_mex(r0,r,order,sqn_flag,r_root,t_root,tj,wj,D0,w_bclag,np,p);
-
-end
-
-function M_all = momentsallplain(r0,r,order,np,p)
-% plain rule, matlab
-
-M_all = zeros(numel(r(1,:)),2*order+2,numel(r0(1,:)));
-for j=1:size(r0,2)
-  % target
-  r0_j = r0(:,j);
-  % loop over edge patch
-  for ell = 1:np
-    idx_ell = (ell-1)*p + (1:p);
-    r_ell = r(:,idx_ell);
-    % plain smooth quadrature
-    [~,mk_j] = moments(r0_j,r_ell,2*order+1);
-    M_all(idx_ell,:,j) = mk_j;
-  end
-end
-
-end
 
 function s = get_high_order_quad(r,orderf)
 

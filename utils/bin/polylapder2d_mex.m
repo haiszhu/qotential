@@ -7,11 +7,11 @@ nck_der = nck_der(:,idx);
 nck_idx = 1:ell+1; nck_idx = nck_idx(idx);
 nck_pow = [];
 ellp1 = ell+1;
-mex_id_ = 'lenofnckcoeffs(i int[x], i int[x], i int[x], o int[x], o int[x])';
+mex_id_ = 'lenofnckcoeffs(c i int[x], c i int[x], c i int[x], c o int[x], c o int[x])';
 [len, idx_flag] = specialquad(mex_id_, i, j, ell, 1, 1, 1, 1, ellp1);
 
 if len
-mex_id_ = 'polylapder2d(i int[x], i int[x], i int[x], i int[x], i int[xx], i int[x], o double[x], o int[xx])';
+mex_id_ = 'polylapder2d(c i int[x], c i int[x], c i int[x], c i int[x], c i int[xx], c i int[x], c o double[x], c o int[xx])';
 [nck_coeffs, nck_pow] = specialquad(mex_id_, i, j, ell, len, nck_der, nck_idx, 1, 1, 1, 1, 2, len, len, len, 3, len);
 else
 nck_coeffs = []; nck_pow = [];

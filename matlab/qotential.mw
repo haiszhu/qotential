@@ -46,3 +46,28 @@ if_adapt_d = double(logical(if_adapt));
 Ac         = zeros(m_tgt, npat);
 # FORTRAN qol_lap3ddlp_closepanel_mex(int[1] m_tgt, double[3,m_tgt] t_x, int[1] npat, double[3,npat] s_x, int[1] order, int[1] ref, double[1] if_adapt_d, inout double[m_tgt,npat] Ac);
 end
+
+@function [S_ij, K_ij, Omegas, IalphaAsvestas, timeinfo] = qol_rrq_mex(m, tx, iside, order, h_dim, nquad, n, sx, sw, snx, rts, rps, orderff, distff, isimd, S_ij, K_ij, Omegas, IalphaAsvestas, timeinfo)
+m       = double(m);
+n       = double(n);
+iside   = double(iside);
+order   = double(order);
+h_dim   = double(h_dim);
+nquad   = double(nquad);
+orderff = double(orderff);
+isimd   = double(isimd);
+distff  = double(distff);
+tx  = double(reshape(tx,  3, m));
+sx  = double(reshape(sx,  3, n));
+snx = double(reshape(snx, 3, n));
+rts = double(reshape(rts, 3, n));
+rps = double(reshape(rps, 3, n));
+sw  = double(sw(:));
+if nargin < 16 || isempty(S_ij), S_ij = zeros(m, n); end
+if nargin < 17 || isempty(K_ij), K_ij = zeros(m, n); end
+if nargin < 18 || isempty(Omegas), Omegas = zeros(4*h_dim, m); end
+if nargin < 19 || isempty(IalphaAsvestas), IalphaAsvestas = zeros(m, 1); end
+if nargin < 20 || isempty(timeinfo), timeinfo = zeros(20, 1); end
+mh = 4*h_dim;   % Omegas is (4*h_dim, m); mwrap needs a plain name here
+# FORTRAN qol_rrq_mex(int[1] m, double[3,m] tx, int[1] iside, int[1] order, int[1] h_dim, int[1] nquad, int[1] n, double[3,n] sx, double[n] sw, double[3,n] snx, double[3,n] rts, double[3,n] rps, int[1] orderff, double[1] distff, int[1] isimd, inout double[m,n] S_ij, inout double[m,n] K_ij, inout double[mh,m] Omegas, inout double[m] IalphaAsvestas, inout double[20] timeinfo);
+end

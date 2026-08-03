@@ -1,0 +1,25 @@
+function [S_ij, K_ij, Omegas, IalphaAsvestas, timeinfo] = qol_rrq_mex(m, tx, iside, order, h_dim, nquad, n, sx, sw, snx, rts, rps, orderff, distff, isimd, S_ij, K_ij, Omegas, IalphaAsvestas, timeinfo)
+m       = double(m);
+n       = double(n);
+iside   = double(iside);
+order   = double(order);
+h_dim   = double(h_dim);
+nquad   = double(nquad);
+orderff = double(orderff);
+isimd   = double(isimd);
+distff  = double(distff);
+tx  = double(reshape(tx,  3, m));
+sx  = double(reshape(sx,  3, n));
+snx = double(reshape(snx, 3, n));
+rts = double(reshape(rts, 3, n));
+rps = double(reshape(rps, 3, n));
+sw  = double(sw(:));
+if nargin < 16 || isempty(S_ij), S_ij = zeros(m, n); end
+if nargin < 17 || isempty(K_ij), K_ij = zeros(m, n); end
+if nargin < 18 || isempty(Omegas), Omegas = zeros(4*h_dim, m); end
+if nargin < 19 || isempty(IalphaAsvestas), IalphaAsvestas = zeros(m, 1); end
+if nargin < 20 || isempty(timeinfo), timeinfo = zeros(20, 1); end
+mh = 4*h_dim;   % Omegas is (4*h_dim, m); mwrap needs a plain name here
+mex_id_ = 'qol_rrq_mex(c i int64_t[x], c i double[xx], c i int64_t[x], c i int64_t[x], c i int64_t[x], c i int64_t[x], c i int64_t[x], c i double[xx], c i double[x], c i double[xx], c i double[xx], c i double[xx], c i int64_t[x], c i double[x], c i int64_t[x], c io double[xx], c io double[xx], c io double[xx], c io double[x], c io double[x])';
+[S_ij, K_ij, Omegas, IalphaAsvestas, timeinfo] = qotential_mex(mex_id_, m, tx, iside, order, h_dim, nquad, n, sx, sw, snx, rts, rps, orderff, distff, isimd, S_ij, K_ij, Omegas, IalphaAsvestas, timeinfo, 1, 3, m, 1, 1, 1, 1, 1, 3, n, n, 3, n, 3, n, 3, n, 1, 1, 1, m, n, m, n, mh, m, m, 20);
+end

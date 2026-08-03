@@ -25,15 +25,24 @@ module patch_refine_mod
   type :: patch_level_t
     integer(8) :: n    = 0_8            ! quadrature nodes on this level
     integer(8) :: nsub = 0_8            ! sub-patches on this level
-    real(r64), allocatable :: uv(:,:)        ! (2,n)  reference coordinates
-    real(r64), allocatable :: wt(:)          ! (n)    reference weights
     real(r64), allocatable :: sx(:,:)        ! (3,n)  surface points
     real(r64), allocatable :: snx(:,:)       ! (3,n)  unit normals
     real(r64), allocatable :: sw(:)          ! (n)    area weights
-    real(r64), allocatable :: interpmat(:,:) ! (n,npols) from the base patch
     real(r64), allocatable :: qpoint(:,:)    ! (3,nsub) weighted centroid
     real(r64), allocatable :: qradii2(:)     ! (nsub)   squared near radius
   end type patch_level_t
+
+  type :: patch_ref_level_t
+    integer(8) :: n = 0_8, nsub = 0_8
+    real(r64), allocatable :: uv(:,:), wt(:), interpmat(:,:)
+  end type patch_ref_level_t
+
+  type :: patch_ref_t
+    integer(8) :: korder = -1_8, npols = -1_8, order = -1_8, nlevel = -1_8
+    type(patch_ref_level_t), allocatable :: lev(:)
+  end type patch_ref_t
+
+  type(patch_ref_t), save :: REF
 
   type :: patch_levels_t
     integer(8) :: nlevel = 0_8
@@ -42,50 +51,46 @@ module patch_refine_mod
 
 contains
 
-  subroutine build_patch_levels_r64(korder, npols, sx, rts, rps, order, &
-                                    dist, nlevel, lv)
-    integer(8),           intent(in)  :: korder, npols, order, nlevel
-    real(r64),            intent(in)  :: sx(3,npols), rts(3,npols), rps(3,npols)
-    real(r64),            intent(in)  :: dist
-    type(patch_levels_t), intent(out) :: lv
+  subroutine build_patch_ref_r64(korder, npols, order, nlevel)
+    integer(8), intent(in) :: korder, npols, order, nlevel
 
     real(r64)  :: umatr(npols,npols), vmatr(npols,npols)
-    real(r64)  :: srcT(npols,9), dist2
     integer(8) :: ilev, n1, nprev, n, nsub, ncc
 
-    dist2 = dist*dist
+    if (REF%korder == korder .and. REF%npols  == npols .and. &
+        REF%order  == order  .and. REF%nlevel == nlevel) return
 
-    srcT(:,1:3) = transpose(sx)
-    srcT(:,4:6) = transpose(rts)
-    srcT(:,7:9) = transpose(rps)
+    if (.not. (REF%korder == korder .and. REF%npols  == npols .and. &
+               REF%order  == order  .and. REF%nlevel == nlevel)) then
+
+    if (allocated(REF%lev)) deallocate(REF%lev)
+    allocate(REF%lev(nlevel))
 
     umatr = 0.0_r64;  vmatr = 0.0_r64
     call koorn_vals2coefs_coefs2vals(korder, npols, umatr, vmatr)
 
     n1  = order*(order+1_8)/2_8        ! nodes per sub-patch, VR order-1
     ncc = size(CC_SUBIDX, kind=8) + 4_8
-    lv%nlevel = nlevel
-    allocate(lv%lev(nlevel))
 
     do ilev = 1, nlevel
 
       if (ilev == 1_8) then
         n = n1;  nsub = 1_8
-        allocate(lv%lev(1)%uv(2,n), lv%lev(1)%wt(n))
-        call get_vioreanu_nodes(order-1_8, n, lv%lev(1)%uv)
-        call get_vioreanu_wts  (order-1_8, n, lv%lev(1)%wt)
+        allocate(REF%lev(1)%uv(2,n), REF%lev(1)%wt(n))
+        call get_vioreanu_nodes(order-1_8, n, REF%lev(1)%uv)
+        call get_vioreanu_wts  (order-1_8, n, REF%lev(1)%wt)
 
       else if (ilev == nlevel .and. nlevel == 4_8) then
         n = ncc*n1;  nsub = ncc
-        allocate(lv%lev(ilev)%uv(2,n), lv%lev(ilev)%wt(n))
+        allocate(REF%lev(ilev)%uv(2,n), REF%lev(ilev)%wt(n))
         block
           real(r64), allocatable :: uvt(:,:), wtt(:)
           real(r64)  :: uv0(2)
           integer(8) :: np, q, b, i, isrc, idst
-          np = lv%lev(ilev-1)%n
+          np = REF%lev(ilev-1)%n
           allocate(uvt(2,4*np), wtt(4*np))
           do i = 1, np
-            uv0 = 2.0_r64*lv%lev(ilev-1)%uv(:,i) - 1.0_r64
+            uv0 = 2.0_r64*REF%lev(ilev-1)%uv(:,i) - 1.0_r64
             uvt(:,      i) =  uv0
             uvt(:,   np+i) = -uv0
             uvt(1, 2*np+i) =  uv0(1)
@@ -93,7 +98,7 @@ contains
             uvt(1, 3*np+i) =  uv0(1) + 2.0_r64
             uvt(2, 3*np+i) =  uv0(2)
             do b = 0, 3
-              wtt(b*np+i) = 0.25_r64*lv%lev(ilev-1)%wt(i)
+              wtt(b*np+i) = 0.25_r64*REF%lev(ilev-1)%wt(i)
             end do
           end do
           uvt = ((uvt - 1.0_r64)*0.5_r64 + 1.0_r64)*0.5_r64
@@ -101,63 +106,105 @@ contains
             do i = 1, n1
               isrc = (CC_SUBIDX(q)-1_8)*n1 + i
               idst = (q-1_8)*n1 + i
-              lv%lev(ilev)%uv(:,idst) = uvt(:,isrc)
-              lv%lev(ilev)%wt(idst)   = wtt(isrc)
+              REF%lev(ilev)%uv(:,idst) = uvt(:,isrc)
+              REF%lev(ilev)%wt(idst)   = wtt(isrc)
             end do
           end do
           do q = 1, 4
             do i = 1, n1
               isrc = (q-1_8)*n1 + i
               idst = (size(CC_SUBIDX, kind=8) + q - 1_8)*n1 + i
-              lv%lev(ilev)%uv(:,idst) = &
-                   (lv%lev(2)%uv(:,isrc) - 0.5_r64)*CC_EXTRA_SCALE + CC_EXTRA_OFFSET
-              lv%lev(ilev)%wt(idst)   = CC_EXTRA_SCALE**2 * lv%lev(2)%wt(isrc)
+              REF%lev(ilev)%uv(:,idst) = &
+                   (REF%lev(2)%uv(:,isrc) - 0.5_r64)*CC_EXTRA_SCALE + CC_EXTRA_OFFSET
+              REF%lev(ilev)%wt(idst)   = CC_EXTRA_SCALE**2 * REF%lev(2)%wt(isrc)
             end do
           end do
           deallocate(uvt, wtt)
         end block
 
       else
-        nprev = lv%lev(ilev-1)%n
-        n = 4_8*nprev;  nsub = 4_8*lv%lev(ilev-1)%nsub
-        allocate(lv%lev(ilev)%uv(2,n), lv%lev(ilev)%wt(n))
+        nprev = REF%lev(ilev-1)%n
+        n = 4_8*nprev;  nsub = 4_8*REF%lev(ilev-1)%nsub
+        allocate(REF%lev(ilev)%uv(2,n), REF%lev(ilev)%wt(n))
         block
           real(r64)  :: uv0(2)
           integer(8) :: i, b
           do i = 1, nprev
-            uv0 = 2.0_r64*lv%lev(ilev-1)%uv(:,i) - 1.0_r64
-            lv%lev(ilev)%uv(:,         i) =  uv0
-            lv%lev(ilev)%uv(:,  nprev+i) = -uv0
-            lv%lev(ilev)%uv(1,2*nprev+i) =  uv0(1)
-            lv%lev(ilev)%uv(2,2*nprev+i) =  uv0(2) + 2.0_r64
-            lv%lev(ilev)%uv(1,3*nprev+i) =  uv0(1) + 2.0_r64
-            lv%lev(ilev)%uv(2,3*nprev+i) =  uv0(2)
+            uv0 = 2.0_r64*REF%lev(ilev-1)%uv(:,i) - 1.0_r64
+            REF%lev(ilev)%uv(:,         i) =  uv0
+            REF%lev(ilev)%uv(:,  nprev+i) = -uv0
+            REF%lev(ilev)%uv(1,2*nprev+i) =  uv0(1)
+            REF%lev(ilev)%uv(2,2*nprev+i) =  uv0(2) + 2.0_r64
+            REF%lev(ilev)%uv(1,3*nprev+i) =  uv0(1) + 2.0_r64
+            REF%lev(ilev)%uv(2,3*nprev+i) =  uv0(2)
             do b = 0, 3
-              lv%lev(ilev)%wt(b*nprev+i) = 0.25_r64*lv%lev(ilev-1)%wt(i)
+              REF%lev(ilev)%wt(b*nprev+i) = 0.25_r64*REF%lev(ilev-1)%wt(i)
             end do
           end do
-          lv%lev(ilev)%uv = ((lv%lev(ilev)%uv - 1.0_r64)*0.5_r64 + 1.0_r64)*0.5_r64
+          REF%lev(ilev)%uv = ((REF%lev(ilev)%uv - 1.0_r64)*0.5_r64 + 1.0_r64)*0.5_r64
         end block
       end if
 
+      REF%lev(ilev)%n    = n
+      REF%lev(ilev)%nsub = nsub
+
+      allocate(REF%lev(ilev)%interpmat(n,npols))
+      block
+        real(r64), allocatable :: pols(:,:)
+        allocate(pols(n,npols))
+        call koorn_pols_batch_r64(n, REF%lev(ilev)%uv, korder, npols, pols)
+        call dgemm('N', 'N', n, npols, npols, 1.0_r64, pols, n, &
+                   umatr, npols, 0.0_r64, REF%lev(ilev)%interpmat, n)
+        deallocate(pols)
+      end block
+
+    end do
+
+    REF%korder = korder;  REF%npols  = npols
+    REF%order  = order;   REF%nlevel = nlevel
+
+    end if
+
+  end subroutine build_patch_ref_r64
+
+  subroutine build_patch_levels_r64(korder, npols, sx, rts, rps, order, &
+                                    dist, nlevel, lv)
+    integer(8),           intent(in)  :: korder, npols, order, nlevel
+    real(r64),            intent(in)  :: sx(3,npols), rts(3,npols), rps(3,npols)
+    real(r64),            intent(in)  :: dist
+    type(patch_levels_t), intent(out) :: lv
+
+    real(r64)  :: srcT(npols,9), dist2
+    integer(8) :: ilev, n1, n, nsub
+
+    call build_patch_ref_r64(korder, npols, order, nlevel)
+
+    dist2 = dist*dist
+
+    srcT(:,1:3) = transpose(sx)
+    srcT(:,4:6) = transpose(rts)
+    srcT(:,7:9) = transpose(rps)
+
+    n1 = order*(order+1_8)/2_8
+    lv%nlevel = nlevel
+    allocate(lv%lev(nlevel))
+
+    do ilev = 1, nlevel
+      n    = REF%lev(ilev)%n
+      nsub = REF%lev(ilev)%nsub
       lv%lev(ilev)%n    = n
       lv%lev(ilev)%nsub = nsub
 
       allocate(lv%lev(ilev)%sx(3,n), lv%lev(ilev)%snx(3,n), lv%lev(ilev)%sw(n))
-      allocate(lv%lev(ilev)%interpmat(n,npols))
       allocate(lv%lev(ilev)%qpoint(3,nsub), lv%lev(ilev)%qradii2(nsub))
 
       block
-        real(r64), allocatable :: pols(:,:), geo(:,:)
+        real(r64), allocatable :: geo(:,:)
         real(r64)  :: sp, swsum, qp(3), d2, rmax2
         integer(8) :: i, k, i0
 
-        allocate(pols(n,npols), geo(n,9))
-        call koorn_pols_batch_r64(n, lv%lev(ilev)%uv, korder, npols, pols)
-
-        call dgemm('N', 'N', n, npols, npols, 1.0_r64, pols, n, &
-                   umatr, npols, 0.0_r64, lv%lev(ilev)%interpmat, n)
-        call dgemm('N', 'N', n, 9_8, npols, 1.0_r64, lv%lev(ilev)%interpmat, n, &
+        allocate(geo(n,9))
+        call dgemm('N', 'N', n, 9_8, npols, 1.0_r64, REF%lev(ilev)%interpmat, n, &
                    srcT, npols, 0.0_r64, geo, n)
 
         lv%lev(ilev)%sx = transpose(geo(:,1:3))
@@ -167,7 +214,7 @@ contains
           lv%lev(ilev)%snx(3,i) = geo(i,7)*geo(i,5) - geo(i,8)*geo(i,4)
           sp = sqrt(dot_product(lv%lev(ilev)%snx(:,i), lv%lev(ilev)%snx(:,i)))
           lv%lev(ilev)%snx(:,i) = lv%lev(ilev)%snx(:,i)/sp
-          lv%lev(ilev)%sw(i)    = sp*lv%lev(ilev)%wt(i)
+          lv%lev(ilev)%sw(i)    = sp*REF%lev(ilev)%wt(i)
         end do
 
         do k = 1, nsub
@@ -188,9 +235,8 @@ contains
           lv%lev(ilev)%qradii2(k)  = dist2*max(rmax2, swsum)
         end do
 
-        deallocate(pols, geo)
+        deallocate(geo)
       end block
-
     end do
 
   end subroutine build_patch_levels_r64
@@ -258,12 +304,12 @@ contains
                                   lv%lev(ilev)%snx, lv%lev(ilev)%sw, Ab, Bb)
           end if
           call dgemm('N', 'N', nbat, npols, nl, 1.0_r64, Ab, nbat, &
-                     lv%lev(ilev)%interpmat, nl, 0.0_r64, Cb, nbat)
+                     REF%lev(ilev)%interpmat, nl, 0.0_r64, Cb, nbat)
           do i = 1, nbat
             As(ibat(i),:) = Cb(i,:)
           end do
           call dgemm('N', 'N', nbat, npols, nl, 1.0_r64, Bb, nbat, &
-                     lv%lev(ilev)%interpmat, nl, 0.0_r64, Cb, nbat)
+                     REF%lev(ilev)%interpmat, nl, 0.0_r64, Cb, nbat)
           do i = 1, nbat
             Ad(ibat(i),:) = Cb(i,:)
           end do

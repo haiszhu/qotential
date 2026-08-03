@@ -6,10 +6,6 @@
 	path = utils/kdtree
 	url = https://github.com/taiya/kdtree.git
 	ignore = all
-[submodule "private"]
-	path = private
-	url = https://github.com/haiszhu/qotential-master.git
-	ignore = all
 [submodule "external/LineQuaaadrature"]
 	path = external/LineQuaaadrature
 	url = https://github.com/haiszhu/LineQuaaadrature

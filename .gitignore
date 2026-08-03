@@ -10,3 +10,4 @@ fort.*
 *.a
 int2*
 make.inc
+build/

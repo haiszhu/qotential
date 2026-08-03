@@ -36,6 +36,9 @@ module lap3d_close_mod
   private
   public :: Lap3dDLP_closepanel_r64
   public :: Lap3dDLP_closepanel_r128
+  public :: build_tc_chialpha_r64
+  public :: build_closepanel_precomp_r64
+  public :: rrq_r64
 
   ! Geometry constant: the unit square boundary is traversed in 8
   ! equal panels (matches qotential demo1's linspace(0, 2*pi, 9)).
@@ -311,5 +314,464 @@ contains
       end do
     end do
   end subroutine lu_solve_local_r64
+
+  subroutine build_tc_chialpha_r64(m, r0, nbd, sbdnp, nquad, ncoeff, &
+                                   sxbd, stangbd, sspbd, w1, w3, &
+                                   Fx, Fy, Fz, IalphaAsvestas, Ichi, Ialpha)
+    integer(8),   intent(in)  :: m, nbd, sbdnp, nquad, ncoeff
+    real(r64),    intent(in)  :: r0(3,m)
+    real(r64),    intent(in)  :: sxbd(3,nbd), stangbd(3,nbd), sspbd(nbd)
+    real(r64),    intent(in)  :: w1(nquad,sbdnp,m), w3(nquad,sbdnp,m)
+    complex(r64), intent(in)  :: Fx(nbd,ncoeff), Fy(nbd,ncoeff), Fz(nbd,ncoeff)
+    real(r64),    intent(in)  :: IalphaAsvestas(m)
+    complex(r64), intent(out) :: Ichi(m,ncoeff,4), Ialpha(m,ncoeff,4)
+
+    complex(r64), parameter :: ONEC = ( 1.0_r64, 0.0_r64)
+    complex(r64), parameter :: MONEC = (-1.0_r64, 0.0_r64)
+    complex(r64), parameter :: IMA  = ( 0.0_r64, 1.0_r64)
+
+    real(r64) :: dxdt(nbd), dydt(nbd), dzdt(nbd)
+    real(r64) :: rx(nbd,m), ry(nbd,m), rz(nbd,m)
+    real(r64) :: xx(nbd,m), yy(nbd,m), zz(nbd,m)
+    real(r64) :: xy(nbd,m), xz(nbd,m), yz(nbd,m)
+    real(r64) :: rinvw1(nbd,m), r3invw3(nbd,m), rr(nbd,m)
+    real(r64) :: ax(nbd,m), ay(nbd,m), az(nbd,m)
+    real(r64) :: bx(nbd,m), by(nbd,m), bz3(nbd,m)
+    real(r64) :: g1(nbd,m), g2(nbd,m), g3(nbd,m)
+    complex(r64) :: Bz(nbd,m)
+    real(r64) :: c0(m), c1(m), c2(m), c3(m)
+    complex(r64) :: Fx1(2), Fy1(2), Fz1(2)
+    integer(8) :: j
+
+    dxdt = stangbd(1,:)*sspbd
+    dydt = stangbd(2,:)*sspbd
+    dzdt = stangbd(3,:)*sspbd
+
+    do j = 1, m
+      rx(:,j) = sxbd(1,:) - r0(1,j)
+      ry(:,j) = sxbd(2,:) - r0(2,j)
+      rz(:,j) = sxbd(3,:) - r0(3,j)
+    end do
+    xx = rx*rx;  yy = ry*ry;  zz = rz*rz
+    xy = rx*ry;  xz = rx*rz;  yz = ry*rz
+
+    rr      = 1.0_r64/sqrt(xx + yy + zz)
+    rinvw1  = rr*reshape(w1, [nbd,m])
+    r3invw3 = rr*rr*rr*reshape(w3, [nbd,m])
+
+    do j = 1, m
+      ax(:,j)  = dxdt*rinvw1(:,j)
+      ay(:,j)  = dydt*rinvw1(:,j)
+      az(:,j)  = dzdt*rinvw1(:,j)
+      bx(:,j)  = dxdt*r3invw3(:,j)
+      by(:,j)  = dydt*r3invw3(:,j)
+      bz3(:,j) = dzdt*r3invw3(:,j)
+    end do
+
+    Ichi = (0.0_r64, 0.0_r64)
+    g1 = -rz*ay + ry*az
+    g2 =  rz*ax - rx*az
+    g3 = -ry*ax + rx*ay
+
+    Bz = cmplx(g1, 0.0_r64, r64)
+    call zgemm('T','N', m, ncoeff, nbd, ONEC, Bz, nbd, Fx, nbd, ONEC, Ichi(:,:,1), m)
+    Bz = cmplx(g2, 0.0_r64, r64)
+    call zgemm('T','N', m, ncoeff, nbd, ONEC, Bz, nbd, Fy, nbd, ONEC, Ichi(:,:,1), m)
+    Bz = cmplx(g3, 0.0_r64, r64)
+    call zgemm('T','N', m, ncoeff, nbd, ONEC, Bz, nbd, Fz, nbd, ONEC, Ichi(:,:,1), m)
+    Ichi(:,1,1) = cmplx(IalphaAsvestas, 0.0_r64, r64)
+
+    Ialpha = (0.0_r64, 0.0_r64)
+    g1 = -(yy + zz)*bx + xy*by + xz*bz3
+    g2 =  xy*bx - (xx + zz)*by + yz*bz3
+    g3 =  xz*bx + yz*by - (xx + yy)*bz3
+
+    Bz = cmplx(g1, 0.0_r64, r64)
+    call zgemm('T','N', m, ncoeff, nbd, ONEC,  Bz, nbd, Fx, nbd, ONEC, Ialpha(:,:,1), m)
+    call zgemm('T','N', m, ncoeff, nbd, ONEC,  Bz, nbd, Fz, nbd, ONEC, Ialpha(:,:,3), m)
+    call zgemm('T','N', m, ncoeff, nbd, MONEC, Bz, nbd, Fy, nbd, ONEC, Ialpha(:,:,4), m)
+
+    Bz = cmplx(g2, 0.0_r64, r64)
+    call zgemm('T','N', m, ncoeff, nbd, ONEC,  Bz, nbd, Fy, nbd, ONEC, Ialpha(:,:,1), m)
+    call zgemm('T','N', m, ncoeff, nbd, MONEC, Bz, nbd, Fz, nbd, ONEC, Ialpha(:,:,2), m)
+    call zgemm('T','N', m, ncoeff, nbd, ONEC,  Bz, nbd, Fx, nbd, ONEC, Ialpha(:,:,4), m)
+
+    Bz = cmplx(g3, 0.0_r64, r64)
+    call zgemm('T','N', m, ncoeff, nbd, ONEC,  Bz, nbd, Fz, nbd, ONEC, Ialpha(:,:,1), m)
+    call zgemm('T','N', m, ncoeff, nbd, ONEC,  Bz, nbd, Fy, nbd, ONEC, Ialpha(:,:,2), m)
+    call zgemm('T','N', m, ncoeff, nbd, MONEC, Bz, nbd, Fx, nbd, ONEC, Ialpha(:,:,3), m)
+
+    Fx1 = [ (0.0_r64,0.0_r64), ONEC ]
+    Fy1 = [ cmplx(-sqrt(2.0_r64)/2.0_r64, 0.0_r64, r64), (0.0_r64,0.0_r64) ]
+    Fz1 = [ sqrt(2.0_r64)/2.0_r64*IMA, (0.0_r64,0.0_r64) ]
+
+    c0 = IalphaAsvestas
+    c1 = matmul(transpose(rinvw1), dxdt)
+    c2 = matmul(transpose(rinvw1), dydt)
+    c3 = matmul(transpose(rinvw1), dzdt)
+
+    do j = 1, 2
+      Ialpha(:,j+1,1) = c1*Fx1(j) + c2*Fy1(j) + c3*Fz1(j)
+      Ialpha(:,j+1,2) = c0*Fx1(j) - c2*Fz1(j) + c3*Fy1(j)
+      Ialpha(:,j+1,3) = c0*Fy1(j) + c1*Fz1(j) - c3*Fx1(j)
+      Ialpha(:,j+1,4) = c0*Fz1(j) - c1*Fy1(j) + c2*Fx1(j)
+    end do
+
+  end subroutine build_tc_chialpha_r64
+
+  subroutine build_closepanel_precomp_r64(n, sx, snx, sw, r_vert, &
+                                          nterms, h_dim, nbd, sbdnp, nquad, &
+                                          alpha, exterior, &
+                                          tgl, wgl, Dgl, w_bclag, Legmat, &
+                                          R, c, sxbd, swbd, stangbd, sspbd, &
+                                          qhat, Fbd, Fxbd, Fybd, Fzbd, Mmatrix)
+    use koorn_geom_mod, only: circumcircle_transform_3d, &
+                              koorn_vals2coefs_coefs2vals, line3quadr_3dline
+    use harmonic_mod,   only: l3dtavecevalmat_r64
+    use quatapproximation_mod, only: gauss_r64, bclaginterpweights_r64
+    use linequaaadrature_mod,  only: legeexps_r64
+    integer(8), intent(in)  :: n, nterms, h_dim, nbd, sbdnp, nquad
+    real(r64),  intent(in)  :: sx(3,n), snx(3,n), sw(n), r_vert(3,3), alpha
+    logical,    intent(in)  :: exterior
+    real(r64),  intent(out) :: tgl(nquad), wgl(nquad), Dgl(nquad,nquad)
+    real(r64),  intent(out) :: w_bclag(nquad), Legmat(nquad,nquad)
+    real(r64),  intent(out) :: R(3,3), c(3)
+    real(r64),  intent(out) :: sxbd(3,nbd), swbd(nbd)
+    real(r64),  intent(out) :: stangbd(3,nbd), sspbd(nbd)
+    real(r64),  intent(out) :: qhat(3)
+    complex(r64), intent(out) :: Fbd(nbd,(nterms+1)**2), Fxbd(nbd,(nterms+1)**2)
+    complex(r64), intent(out) :: Fybd(nbd,(nterms+1)**2), Fzbd(nbd,(nterms+1)**2)
+    real(r64),  intent(out) :: Mmatrix(4*h_dim,4*h_dim)
+
+    real(r64), parameter :: OFFSET_FACTOR = 1.25_r64   ! rrq linequadv2.f:8140
+
+    real(r64)  :: vtmp(nquad,nquad), umatr(n,n), vmatr(n,n)
+    real(r64)  :: c0(3), alpha_circ, sxt(3,n), snxt(3,n)
+    real(r64)  :: tpan(sbdnp+1), r_vert_local(3,3), sx3min, pi
+    real(r64)  :: F0(n,h_dim), F1(n,h_dim), F2(n,h_dim), F3(n,h_dim)
+    real(r64)  :: MmatrixS(h_dim,h_dim)
+    integer(8) :: korder, kpols, idxvec(h_dim), i, k, ij, t1, t2, ier
+
+    pi = 4.0_r64*atan(1.0_r64)
+
+    call gauss_r64(nquad, tgl, wgl, Dgl)
+    call bclaginterpweights_r64(nquad, tgl, w_bclag)
+    call legeexps_r64(2_8, nquad, tgl, Legmat, vtmp, wgl)
+
+    call circumcircle_transform_3d(r_vert, R, c0, alpha_circ)
+    do i = 1, n
+      sxt(:,i) = alpha*matmul(R, sx(:,i) - c0)
+    end do
+    sx3min = max(0.0_r64, -minval(sxt(3,:)))
+    c      = c0 - (OFFSET_FACTOR*sx3min/alpha)*R(3,:)
+    do i = 1, n
+      sxt(:,i)  = alpha*matmul(R, sx(:,i) - c)
+      snxt(:,i) = matmul(R, snx(:,i))
+    end do
+
+    korder = nterms - 1_8
+    kpols  = nterms*(nterms+1_8)/2_8
+    call koorn_vals2coefs_coefs2vals(korder, kpols, umatr, vmatr)
+    do k = 1, sbdnp+1
+      tpan(k) = real(k-1, r64)*2.0_r64*pi/real(sbdnp, r64)
+    end do
+    sxbd = 0.0_r64;  swbd = 0.0_r64;  stangbd = 0.0_r64;  sspbd = 0.0_r64
+    r_vert_local = 0.0_r64
+    call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
+                           sbdnp, tpan, nbd, sxbd, swbd, stangbd, sspbd, &
+                           r_vert_local)
+
+    sspbd = (pi/real(sbdnp, r64))*sspbd
+
+    qhat(1) = sum(snxt(1,:))/real(n, r64)
+    qhat(2) = sum(snxt(2,:))/real(n, r64)
+    qhat(3) = sum(snxt(3,:))/real(n, r64)
+    if (.not. exterior) qhat = -qhat
+    qhat = qhat/sqrt(dot_product(qhat, qhat))
+
+    block
+      real(r64)    :: p(3,nbd)
+      complex(r64) :: Gx(nbd,(nterms+1)**2), Gy(nbd,(nterms+1)**2)
+      complex(r64) :: Gz(nbd,(nterms+1)**2)
+      p(1,:) = sxbd(2,:);  p(2,:) = sxbd(3,:);  p(3,:) = sxbd(1,:)
+      ier = 0
+      call l3dtavecevalmat_r64(p, nbd, nterms, Fbd, Gx, Gy, Gz, ier)
+      Fxbd = Gz;  Fybd = Gx;  Fzbd = Gy
+    end block
+
+    t1 = 0_8;  t2 = 0_8
+    do ij = 0, nterms
+      do k = -ij, ij
+        t2 = t2 + 1_8
+        if (ij > 0_8 .and. k > 0_8) then
+          t1 = t1 + 1_8;  idxvec(t1) = t2
+        end if
+      end do
+    end do
+
+    block
+      real(r64)    :: p(3,n)
+      complex(r64) :: Fc(n,(nterms+1)**2), Gx(n,(nterms+1)**2)
+      complex(r64) :: Gy(n,(nterms+1)**2), Gz(n,(nterms+1)**2)
+      p(1,:) = sxt(2,:);  p(2,:) = sxt(3,:);  p(3,:) = sxt(1,:)
+      ier = 0
+      call l3dtavecevalmat_r64(p, n, nterms, Fc, Gx, Gy, Gz, ier)
+      do k = 1, h_dim
+        F0(:,k) = aimag(Fc(:,idxvec(k)))
+        F1(:,k) = aimag(Gz(:,idxvec(k)))
+        F2(:,k) = aimag(Gx(:,idxvec(k)))
+        F3(:,k) = aimag(Gy(:,idxvec(k)))
+      end do
+    end block
+
+    Mmatrix = 0.0_r64
+    Mmatrix(     1:  n, (  h_dim+1):(2*h_dim)) = -F1
+    Mmatrix(     1:  n, (2*h_dim+1):(3*h_dim)) = -F2
+    Mmatrix(     1:  n, (3*h_dim+1):(4*h_dim)) = -F3
+    Mmatrix(  n+1:2*n,         1   :   h_dim ) =  F1
+    Mmatrix(  n+1:2*n, (2*h_dim+1):(3*h_dim)) = -F3
+    Mmatrix(  n+1:2*n, (3*h_dim+1):(4*h_dim)) =  F2
+    Mmatrix(2*n+1:3*n,         1   :   h_dim ) =  F2
+    Mmatrix(2*n+1:3*n, (  h_dim+1):(2*h_dim)) =  F3
+    Mmatrix(2*n+1:3*n, (3*h_dim+1):(4*h_dim)) = -F1
+    Mmatrix(3*n+1:4*n,         1   :   h_dim ) =  F3
+    Mmatrix(3*n+1:4*n, (  h_dim+1):(2*h_dim)) = -F2
+    Mmatrix(3*n+1:4*n, (2*h_dim+1):(3*h_dim)) =  F1
+
+    do k = 1, h_dim
+      MmatrixS(:,k) = snxt(1,:)*F1(:,k) + snxt(2,:)*F2(:,k) + snxt(3,:)*F3(:,k)
+    end do
+    Mmatrix(      1:  h_dim,       1:  h_dim) = MmatrixS
+    Mmatrix(h_dim+1:2*h_dim, h_dim+1:2*h_dim) = F0
+
+  end subroutine build_closepanel_precomp_r64
+
+  subroutine rrq_r64(m, tx, n, sx, snx, sw, rts, rps, &
+                     order, nquad, orderff, distff, exterior, isimd, &
+                     As, Ad, Omega, IalphaAsvestas, timeinfo)
+    use patch_refine_mod, only: patch_levels_t, build_patch_levels_r64, &
+                                lap3dsdlpmat_levels_r64
+    use koorn_geom_mod,   only: koorn_vals2coefs_coefs2vals, line3quadr_3dline
+    use lq_kernel_mod,    only: build_ssq_weights_r64
+    use solidangle_mod,   only: evaluate_solid_angle_integral_fast_r64
+    use omega_mod,        only: qao_omegasdlp_r64
+    integer(8), intent(in)    :: m, n, order, nquad, orderff, isimd
+    real(r64),  intent(in)    :: tx(3,m), sx(3,n), snx(3,n), sw(n)
+    real(r64),  intent(in)    :: rts(3,n), rps(3,n), distff
+    logical,    intent(in)    :: exterior
+    real(r64),  intent(out)   :: As(m,n), Ad(m,n)
+    real(r64),  intent(out)   :: Omega(4*(order*(order+1)/2),m)
+    real(r64),  intent(out)   :: IalphaAsvestas(m)
+    real(r64),  intent(inout) :: timeinfo(20)
+
+    integer(8), parameter :: LEN1 = 2_8, LEN2 = 4_8, LEN3 = 8_8  ! rrq :9239
+    integer(8), parameter :: NLEVEL = 4_8
+    real(r64),  parameter :: RHO_SSQ = 100.0_r64                 ! rrq :609
+
+    integer(8) :: nterms, h_dim, ncoeff, sbdnp, nbd, korder, kpols
+    integer(8) :: nb1, nb2, nb3, i, j, k, ij, t1, t2, ms
+    real(r64)  :: alpha, pi, fac, t0, t1c
+    type(patch_levels_t) :: lv
+
+    real(r64) :: tgl(nquad), wgl(nquad), Dgl(nquad,nquad), w_bclag(nquad)
+    real(r64) :: Legmat(nquad,nquad), bclagmatlr(nquad,2)
+    real(r64) :: R(3,3), c(3), qhat(3), r_vert(3,3)
+    real(r64) :: sxbd(3,3*nquad), swbd(3*nquad)
+    real(r64) :: stangbd(3,3*nquad), sspbd(3*nquad)
+    real(r64) :: sxbd1(3,3*LEN1*nquad), stangbd1(3,3*LEN1*nquad)
+    real(r64) :: swbd1(3*LEN1*nquad)
+    real(r64) :: sxbd2(3,3*LEN2*nquad), stangbd2(3,3*LEN2*nquad)
+    real(r64) :: swbd2(3*LEN2*nquad)
+    real(r64) :: sxbd3(3,3*LEN3*nquad), stangbd3(3,3*LEN3*nquad)
+    real(r64) :: swbd3(3*LEN3*nquad)
+    complex(r64) :: Fbd(3*nquad,(order+1)**2), Fxbd(3*nquad,(order+1)**2)
+    complex(r64) :: Fybd(3*nquad,(order+1)**2), Fzbd(3*nquad,(order+1)**2)
+    real(r64) :: Mmatrix(4*(order*(order+1)/2),4*(order*(order+1)/2))
+    real(r64) :: sxt(3,n), umatr(n,n), vmatr(n,n), dl(nquad), dr(nquad)
+    integer(8) :: idxs(m)
+
+    pi     = 4.0_r64*atan(1.0_r64)
+    nterms = order
+    h_dim  = nterms*(nterms+1_8)/2_8
+    ncoeff = (nterms+1_8)*(nterms+2_8)/2_8
+    sbdnp  = 3_8                       ! rrq: sbdnp = 3*len0, len0 = 1
+    nbd    = sbdnp*nquad
+    korder = nterms - 1_8
+    kpols  = nterms*(nterms+1_8)/2_8
+    nb1    = 3_8*LEN1*nquad
+    nb2    = 3_8*LEN2*nquad
+    nb3    = 3_8*LEN3*nquad
+
+    As = 0.0_r64;  Ad = 0.0_r64
+    Omega = 0.0_r64;  IalphaAsvestas = 0.0_r64
+
+    alpha = 1.25_r64/sqrt(2.0_r64*sum(sw))
+
+    call cpu_time(t0)
+    call build_patch_levels_r64(korder, n, sx, rts, rps, orderff, distff, &
+                                NLEVEL, lv)
+    call cpu_time(t1c);  timeinfo(1) = timeinfo(1) + (t1c - t0)
+
+    call cpu_time(t0)
+
+    call koorn_vals2coefs_coefs2vals(korder, kpols, umatr, vmatr)
+    block
+      real(r64) :: tp(sbdnp+1), bx(3,3*nquad), bw(3*nquad)
+      real(r64) :: bt(3,3*nquad), bs(3*nquad)
+      do k = 1, sbdnp+1_8
+        tp(k) = real(k-1, r64)*2.0_r64*pi/real(sbdnp, r64)
+      end do
+      bx = 0.0_r64; bw = 0.0_r64; bt = 0.0_r64; bs = 0.0_r64
+      r_vert = 0.0_r64
+      call line3quadr_3dline(sx, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
+                             sbdnp, tp, nbd, bx, bw, bt, bs, r_vert)
+    end block
+
+    call build_closepanel_precomp_r64(n, sx, snx, sw, r_vert, &
+                                      nterms, h_dim, nbd, sbdnp, nquad, &
+                                      alpha, exterior, &
+                                      tgl, wgl, Dgl, w_bclag, Legmat, &
+                                      R, c, sxbd, swbd, stangbd, sspbd, &
+                                      qhat, Fbd, Fxbd, Fybd, Fzbd, Mmatrix)
+
+    do i = 1, n
+      sxt(:,i) = alpha*matmul(R, sx(:,i) - c)
+    end do
+
+    block
+      real(r64) :: tp(3*LEN1+1), ss(3*LEN1*nquad), rv(3,3)
+      do k = 1, 3_8*LEN1+1_8
+        tp(k) = real(k-1, r64)*2.0_r64*pi/real(3_8*LEN1, r64)
+      end do
+      sxbd1 = 0.0_r64; swbd1 = 0.0_r64; stangbd1 = 0.0_r64; ss = 0.0_r64
+      rv = 0.0_r64
+      call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
+                             3_8*LEN1, tp, nb1, sxbd1, swbd1, stangbd1, ss, rv)
+    end block
+    block
+      real(r64) :: tp(3*LEN2+1), ss(3*LEN2*nquad), rv(3,3)
+      do k = 1, 3_8*LEN2+1_8
+        tp(k) = real(k-1, r64)*2.0_r64*pi/real(3_8*LEN2, r64)
+      end do
+      sxbd2 = 0.0_r64; swbd2 = 0.0_r64; stangbd2 = 0.0_r64; ss = 0.0_r64
+      rv = 0.0_r64
+      call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
+                             3_8*LEN2, tp, nb2, sxbd2, swbd2, stangbd2, ss, rv)
+    end block
+    block
+      real(r64) :: tp(3*LEN3+1), ss(3*LEN3*nquad), rv(3,3)
+      do k = 1, 3_8*LEN3+1_8
+        tp(k) = real(k-1, r64)*2.0_r64*pi/real(3_8*LEN3, r64)
+      end do
+      sxbd3 = 0.0_r64; swbd3 = 0.0_r64; stangbd3 = 0.0_r64; ss = 0.0_r64
+      rv = 0.0_r64
+      call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
+                             3_8*LEN3, tp, nb3, sxbd3, swbd3, stangbd3, ss, rv)
+    end block
+
+    dl = w_bclag/(-1.0_r64 - tgl)
+    dr = w_bclag/( 1.0_r64 - tgl)
+    bclagmatlr(:,1) = dl/sum(dl)
+    bclagmatlr(:,2) = dr/sum(dr)
+    call cpu_time(t1c);  timeinfo(2) = timeinfo(2) + (t1c - t0)
+
+    call cpu_time(t0)
+    idxs = 0_8;  ms = 0_8
+    call lap3dsdlpmat_levels_r64(m, tx, n, lv, isimd, As, Ad, idxs, ms)
+    call cpu_time(t1c);  timeinfo(3) = timeinfo(3) + (t1c - t0)
+
+    if (ms > 0_8) then
+      block
+        real(r64)    :: txn(3,ms)
+        real(r64)    :: w1(nquad,3,ms), w3(nquad,3,ms), w5(nquad,3,ms)
+        complex(r64) :: troot(ms,3), xr(ms,3), yr(ms,3), zr(ms,3)
+        real(r64)    :: xrr(ms,3*nquad), yrr(ms,3*nquad), zrr(ms,3*nquad)
+        integer(8)   :: rfc(ms,3*nquad), rfc_ssq(ms), idxnp(ncoeff)
+        complex(r64) :: Fx(3*nquad,ncoeff), Fy(3*nquad,ncoeff)
+        complex(r64) :: Fz(3*nquad,ncoeff)
+        complex(r64) :: Ichi(ms,ncoeff,4), Ialpha(ms,ncoeff,4)
+        real(r64)    :: Ias(ms), om_slp(h_dim,ms), om(h_dim,ms,4)
+        real(r64)    :: Ocl(h_dim,ms), Oadd(4*h_dim,ms), Atmp(4*h_dim,ms)
+        real(r64)    :: MD(4*h_dim,4*h_dim), Msl(h_dim,h_dim)
+        real(r64)    :: Fm(h_dim,h_dim), Otmp(h_dim,ms)
+        integer(8)   :: ipiv4(4*h_dim), ipiv1(h_dim), info
+
+        do j = 1, ms
+          txn(:,j) = alpha*matmul(R, tx(:,idxs(j)) - c)
+        end do
+
+        call cpu_time(t0)
+        w1 = 0.0_r64;  w3 = 0.0_r64;  w5 = 0.0_r64
+        troot = (0.0_r64,0.0_r64);  xr = troot;  yr = troot;  zr = troot
+        rfc = 0_8;  rfc_ssq = 0_8
+        call build_ssq_weights_r64(ms, txn, RHO_SSQ, nbd, sxbd, sbdnp, nquad, &
+                                   tgl, wgl, Legmat, w1, w3, w5, &
+                                   troot, xr, yr, zr, rfc(:,1:sbdnp), rfc_ssq)
+        call cpu_time(t1c);  timeinfo(4) = timeinfo(4) + (t1c - t0)
+
+        call cpu_time(t0)
+        xrr = 0.0_r64;  yrr = 0.0_r64;  zrr = 0.0_r64
+        xrr(:,1:sbdnp) = real(xr, r64)
+        yrr(:,1:sbdnp) = real(yr, r64)
+        zrr(:,1:sbdnp) = real(zr, r64)
+        Ias = 0.0_r64
+        call evaluate_solid_angle_integral_fast_r64(ms, txn, nbd, sbdnp, nquad, &
+             sxbd, stangbd, sspbd, &
+             LEN1, sxbd1, stangbd1, swbd1, &
+             LEN2, sxbd2, stangbd2, swbd2, &
+             LEN3, sxbd3, stangbd3, swbd3, &
+             qhat, tgl, wgl, Dgl, w_bclag, bclagmatlr, &
+             troot, xrr, yrr, zrr, rfc, Ias)
+        call cpu_time(t1c);  timeinfo(5) = timeinfo(5) + (t1c - t0)
+
+        t1 = 0_8;  t2 = 0_8
+        do ij = 0, nterms
+          do k = -ij, ij
+            t2 = t2 + 1_8
+            if (k <= 0_8) then
+              t1 = t1 + 1_8;  idxnp(t1) = t2
+            end if
+          end do
+        end do
+        Fx = Fxbd(:,idxnp);  Fy = Fybd(:,idxnp);  Fz = Fzbd(:,idxnp)
+
+        call build_tc_chialpha_r64(ms, txn, nbd, sbdnp, nquad, ncoeff, &
+                                   sxbd, stangbd, sspbd, w1, w3, &
+                                   Fx, Fy, Fz, Ias, Ichi, Ialpha)
+        call qao_omegasdlp_r64(ms, nterms, ncoeff, h_dim, txn, Ichi, Ialpha, &
+                               om_slp, om)
+
+        fac = 1.0_r64/(4.0_r64*pi)/alpha
+        Ocl = fac*om_slp
+        Oadd(        1:  h_dim, :) =  om(:,:,1)
+        Oadd(  h_dim+1:2*h_dim, :) = -om(:,:,2)
+        Oadd(2*h_dim+1:3*h_dim, :) = -om(:,:,3)
+        Oadd(3*h_dim+1:4*h_dim, :) = -om(:,:,4)
+        Oadd = -fac*Oadd
+
+        Msl = Mmatrix(      1:  h_dim,       1:  h_dim)
+        Fm = Mmatrix(h_dim+1:2*h_dim, h_dim+1:2*h_dim)
+        MD = Mmatrix
+        MD(      1:  h_dim,       1:  h_dim) = 0.0_r64
+        MD(h_dim+1:2*h_dim, h_dim+1:2*h_dim) = 0.0_r64
+
+        Atmp = Oadd
+        MD   = transpose(MD)
+        call dgesv(4_8*h_dim, ms, MD, 4_8*h_dim, ipiv4, Atmp, 4_8*h_dim, info)
+
+        Otmp = Ocl + matmul(transpose(Fm), Atmp(1:h_dim,:))
+        Msl  = transpose(Msl)
+        call dgesv(h_dim, ms, Msl, h_dim, ipiv1, Otmp, h_dim, info)
+
+        do j = 1, ms
+          As(idxs(j),:)           = Otmp(:,j)
+          Ad(idxs(j),:)           = alpha*Atmp(1:h_dim,j)
+          Omega(:,idxs(j))        = Oadd(:,j)
+          IalphaAsvestas(idxs(j)) = Ias(j)
+        end do
+      end block
+    end if
+
+  end subroutine rrq_r64
 
 end module lap3d_close_mod

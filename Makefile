@@ -30,8 +30,8 @@ TEST_DIR   := $(ROOT)/test
 BLD_DIR    := $(ROOT)/build
 
 # ---- upstream package locations (override on command line) ----
-QA_DIR ?= /Users/hzhu/Documents/Github/QuatApproximation
-LQ_DIR ?= /Users/hzhu/Documents/Github/LineQuaaadrature
+QA_DIR ?= $(ROOT)/external/QuatApproximation
+LQ_DIR ?= $(ROOT)/external/LineQuaaadrature
 
 QA_LIB := $(QA_DIR)/build/libQuatApproximation.a
 LQ_LIB := $(LQ_DIR)/build/libLineQuaaadrature.a
@@ -81,7 +81,8 @@ FFLAGS := -g -O3 -fPIC \
            -J$(BLD_DIR) -I$(BLD_DIR) $(QA_INC) $(LQ_INC)
 
 # ---- sources ----
-QOT_SOURCES := $(SRC_DIR)/lap3d_close_mod.f90 \
+QOT_SOURCES := $(SRC_DIR)/patch_refine_mod.f90 \
+               $(SRC_DIR)/lap3d_close_mod.f90 \
                $(SRC_DIR)/lap3d_close_mex.f90
 
 QOT_OBJECTS := $(patsubst $(SRC_DIR)/%.f90,$(BLD_DIR)/%.o,$(QOT_SOURCES))

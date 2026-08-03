@@ -164,4 +164,4 @@ $(TEST_BIN): $(LIB) $(TEST_SRC) | $(BLD_DIR)
 	  -o $(TEST_BIN)
 
 clean:
-	rm -rf $(BLD_DIR) $(MEX_C) $(MEX_OUT) $(MATLAB_DIR)/qol_*.m
+	rm -rf $(BLD_DIR) $(MEX_OUT)

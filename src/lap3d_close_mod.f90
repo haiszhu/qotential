@@ -1,35 +1,13 @@
-! qotential/src/lap3d_close_mod.f90
-!
-! BIE-solver layer: Fortran orchestration of the close-panel evaluation
-! pipeline.  Glues the QuatApproximation-legacy package (close-eval
-! kernel-coefficient builders, harmonic basis, boundary geometry) with
-! the LineQuaaadrature-legacy package (moments / adaptive line quadrature)
-! into a single per-patch routine.
-!
-! Mirrors the MATLAB function `Lap3dDLP_closepanel_demo` (local helper
-! in qotential/demo1.m); produces the same close-evaluation matrix Ac.
-!
-! Public:
-!   Lap3dDLP_closepanel_r64
-!   Lap3dDLP_closepanel_r128   (skeleton; see r128 gap notes inside)
-!
 module lap3d_close_mod
 
-  ! kinds + small primitives
   use quatapproximation_mod, only: r64, r128, gauss_r64, gauss_r128
-  ! harmonic basis values and gradients
   use harmonic_mod, only: evaltensorproductharmonicgrad_r64
-  ! boundary line quadrature on the tensor reference square
   use tensor_geom_mod, only: line3quadr_3dline_T, line3quadr_3dline_T_r128
-  ! q^{nm} kernel-coefficient builders
   use qkernel_mod, only: qak_qnm_i_r64, qak_qnm_i_r128,  &
                           QAK_LPTYPE_D
-  ! omega assembly (per-node and target-dependent)
   use omega_mod, only: qao_omeganm_i_r64, qao_omeganm_i_r128,         &
                        qao_omegaall_r64, qao_omegaall_r128
-  ! in-house small LU solve (no LAPACK dep)
   use koorn_geom_mod, only: lu_solve_r128
-  ! moments (from LineQuaaadrature-legacy)
   use solidangle_mod, only: eval_moments_funvals_r64
 
   implicit none
@@ -40,34 +18,54 @@ module lap3d_close_mod
   public :: build_closepanel_precomp_r64
   public :: rrq_r64
 
-  ! Geometry constant: the unit square boundary is traversed in 8
-  ! equal panels (matches qotential demo1's linspace(0, 2*pi, 9)).
   integer(8), parameter :: SBDNP = 8_8
+
+  type :: close_ref_t
+    integer(8) :: nquad = -1_8, korder = -1_8, kpols = -1_8
+    real(r64), allocatable :: tgl(:), wgl(:), Dgl(:,:), w_bclag(:), Legmat(:,:)
+    real(r64), allocatable :: umatr(:,:), vmatr(:,:)
+  end type close_ref_t
+
+  type(close_ref_t), save :: CREF
 
 contains
 
-  ! ================================================================
-  ! Lap3dDLP_closepanel_r64
-  !
-  ! Build the close-evaluation Laplace DLP matrix Ac for one tensor-
-  ! product patch and a set of close targets.  Single-precision r64.
-  !
-  ! Inputs:
-  !   m_tgt              number of targets
-  !   t_x(3, m_tgt)      target points
-  !   npat               source-patch nodes count (= order^2)
-  !   s_x(3, npat)       source-patch values at GL tensor grid
-  !   order              patch tensor order  (sqrt(npat))
-  !   ref                panel refinement factor (nquad = ref * order)
-  !   if_adapt           .true. -> adaptive line-quad via
-  !                      eval_moments_funvals_r64; .false. -> plain
-  !                      smooth quadrature path (NOT YET PORTED here,
-  !                      will error_stop -- use the if_adapt=.true.
-  !                      path or call qotential's MATLAB
-  !                      momentsallplain in the meantime).
-  ! Output:
-  !   Ac(m_tgt, npat)    close-evaluation matrix
-  ! ================================================================
+  subroutine close_ref_ensure_r64(nquad, korder, kpols)
+    use koorn_geom_mod,        only: koorn_vals2coefs_coefs2vals
+    use quatapproximation_mod, only: gauss_r64, bclaginterpweights_r64
+    use linequaaadrature_mod,  only: legeexps_r64
+    integer(8), intent(in) :: nquad, korder, kpols
+
+    real(r64), allocatable :: vtmp(:,:)
+
+    if (CREF%nquad == nquad .and. CREF%korder == korder .and. &
+        CREF%kpols == kpols) return
+
+    if (.not. (CREF%nquad == nquad .and. CREF%korder == korder .and. &
+               CREF%kpols == kpols)) then
+
+    if (allocated(CREF%tgl)) deallocate(CREF%tgl, CREF%wgl, CREF%Dgl, &
+                                        CREF%w_bclag, CREF%Legmat, &
+                                        CREF%umatr, CREF%vmatr)
+    allocate(CREF%tgl(nquad), CREF%wgl(nquad), CREF%Dgl(nquad,nquad))
+    allocate(CREF%w_bclag(nquad), CREF%Legmat(nquad,nquad))
+    allocate(CREF%umatr(kpols,kpols), CREF%vmatr(kpols,kpols))
+    allocate(vtmp(nquad,nquad))
+
+    call gauss_r64(nquad, CREF%tgl, CREF%wgl, CREF%Dgl)
+    call bclaginterpweights_r64(nquad, CREF%tgl, CREF%w_bclag)
+    call legeexps_r64(2_8, nquad, CREF%tgl, CREF%Legmat, vtmp, CREF%wgl)
+
+    CREF%umatr = 0.0_r64;  CREF%vmatr = 0.0_r64
+    call koorn_vals2coefs_coefs2vals(korder, kpols, CREF%umatr, CREF%vmatr)
+
+    deallocate(vtmp)
+    CREF%nquad = nquad;  CREF%korder = korder;  CREF%kpols = kpols
+
+    end if
+
+  end subroutine close_ref_ensure_r64
+
   subroutine Lap3dDLP_closepanel_r64(m_tgt, t_x, npat, s_x, order, ref, &
                                      if_adapt, Ac)
     integer(8), intent(in)  :: m_tgt, npat, order, ref
@@ -90,7 +88,6 @@ contains
     real(r64), allocatable :: Mmat(:,:), rhs(:,:)
     real(r64), parameter :: PI = 4.0_r64*atan(1.0_r64)
 
-    ! -- 1. quadrature setup ------------------------------------------
     nquad = ref * order
     nbd   = SBDNP * nquad
     h_dim = order * order
@@ -109,7 +106,6 @@ contains
     call line3quadr_3dline_T(s_x, order, nquad, tgl, wgl, Dgl, &
                              SBDNP, tpan, nbd, sxbd, swbd, stangbd, sspbd)
 
-    ! -- 2. harmonic gradient at source nodes -------------------------
     allocate(F(npat, h_dim), Fx(npat, h_dim), Fy(npat, h_dim), Fz(npat, h_dim))
     allocate(ijidx(2, h_dim))
     F = 0.0_r64; Fx = 0.0_r64; Fy = 0.0_r64; Fz = 0.0_r64; ijidx = 0_8
@@ -119,10 +115,6 @@ contains
     F0 = 0.0_r64
     F1 = Fx ; F2 = Fy ; F3 = Fz   ! 1st h_dim source-nodes (assumes npat=h_dim)
 
-    ! Mmat = [ F0 -F1 -F2 -F3 ;
-    !          F1  F0 -F3  F2 ;
-    !          F2  F3  F0 -F1 ;
-    !          F3 -F2  F1  F0 ]   (4*h_dim x 4*h_dim)
     allocate(Mmat(4*h_dim, 4*h_dim))
     Mmat = 0.0_r64
     Mmat(           1:  h_dim,           1:  h_dim) =  F0
@@ -142,13 +134,11 @@ contains
     Mmat( 3*h_dim+1:4*h_dim, 2*h_dim+1:3*h_dim) =  F1
     Mmat( 3*h_dim+1:4*h_dim, 3*h_dim+1:4*h_dim) =  F0
 
-    ! -- 3. harmonic gradient at boundary nodes -----------------------
     deallocate(F, Fx, Fy, Fz)
     allocate(F(nbd, h_dim), Fx(nbd, h_dim), Fy(nbd, h_dim), Fz(nbd, h_dim))
     F = 0.0_r64; Fx = 0.0_r64; Fy = 0.0_r64; Fz = 0.0_r64
     call evaltensorproductharmonicgrad_r64(nbd, sxbd, order, Fx, Fy, Fz, F, ijidx)
 
-    ! -- 4. q^{nm} kernel-coefficient builders (lptype 'd', 4 slots) --
     allocate(q_i(nbd, h_dim, 5), q_j(nbd, h_dim, 5), q_k(nbd, h_dim, 5))
     allocate(onm0(nbd, h_dim, 4), onm1(nbd, h_dim, 4), &
              onm2(nbd, h_dim, 4), onm3(nbd, h_dim, 4))
@@ -174,13 +164,6 @@ contains
     call qak_qnm_i_r64(3_8, nbd, h_dim, sxbd, QAK_LPTYPE_D, F, Fx, Fy, Fz, dr, q_i, q_j, q_k)
     call qao_omeganm_i_r64(nbd, h_dim, 4_8, sxbd, dr, q_i(:,:,1:4), q_j(:,:,1:4), q_k(:,:,1:4), onm3)
 
-    ! -- 5. moments ----------------------------------------------------
-    ! eval_moments_funvals_r64(..., order_arg, funvals_pre) writes
-    !   funvals_pre(nbd, 2*(order_arg+1), m) = packed [N | M] moments.
-    ! For Lap3dDLP_closepanel we need the M-block at moment count
-    !   ncol = 2*(order+1).  Following lqs_eval_moments_funvals_mex:
-    ! run the inner sub with moment_order = 2*order+1 (which gives
-    ! 2*ncol total cols), then slice cols ncol+1 : 2*ncol (= M-block).
     allocate(M_all(nbd, ncol, m_tgt))
     M_all = 0.0_r64
     if (if_adapt) then
@@ -200,7 +183,6 @@ contains
       error stop
     end if
 
-    ! -- 6. assemble Omega_all -----------------------------------------
     allocate(Omega_all(m_tgt, 4*h_dim))
     call qao_omegaall_r64(m_tgt, nbd*ncol, nbd, h_dim, morder, t_x, &
                           reshape(M_all, (/nbd*ncol, m_tgt/)),       &
@@ -210,16 +192,6 @@ contains
                           reshape(onm3, (/nbd*h_dim, 4_8/)),         &
                           ijidx, Omega_all)
 
-    ! -- 7. solve Mmat^T * X^T = Omega_all^T, take first h_dim rows ----
-    ! MATLAB does: A = (Mmat' \ Omega_all')' * [I; 0_{3h_dim}]
-    !          = first h_dim columns of (Mmat' \ Omega_all')'
-    !          = first h_dim rows transposed of (Mmat' \ Omega_all')
-    ! r64 solve: build A_solve = Mmat^T, RHS = Omega_all^T, lu_solve...
-    ! For r64 we *don't* use lu_solve (r64 in koorn_geom_mod is private);
-    ! instead use LAPACK if available, or fall back to lu_solve_r128 path
-    ! cast.  Since this module is library-only (no -framework Accelerate
-    ! linkage assumed here), we ship a local copy of the partial-pivot
-    ! LU below; same algorithm as lu_solve_r128 but at r64.
     allocate(rhs(4*h_dim, m_tgt))
     rhs = transpose(Omega_all)
     block
@@ -227,7 +199,6 @@ contains
       Asys = transpose(Mmat)
       call lu_solve_local_r64(4_8*h_dim, Asys, m_tgt, rhs)
     end block
-    ! Ac(m_tgt, npat) = rhs(1:h_dim, :)^T   (only the first h_dim block)
     do k = 1, m_tgt
       do kk = 1, npat
         Ac(k, kk) = rhs(kk, k)
@@ -236,15 +207,6 @@ contains
 
   end subroutine Lap3dDLP_closepanel_r64
 
-  ! ================================================================
-  ! Lap3dDLP_closepanel_r128
-  !
-  ! r128 sibling.  Open r128 dependencies (NOT YET PORTED):
-  !   - evaltensorproductharmonicgrad_r128  (not in QA-legacy)
-  !   - eval_moments_funvals_r128            (not in LineQuaaadrature-legacy)
-  ! Both currently error_stop.  Everything else along the chain is
-  ! already available at r128 in the legacy packages and is wired here.
-  ! ================================================================
   subroutine Lap3dDLP_closepanel_r128(m_tgt, t_x, npat, s_x, order, ref, &
                                       if_adapt, Ac)
     integer(8), intent(in)  :: m_tgt, npat, order, ref
@@ -253,7 +215,6 @@ contains
     logical,    intent(in)  :: if_adapt
     real(r128), intent(out) :: Ac(m_tgt, npat)
 
-    ! Silence unused-arg warnings while the r128 chain has gaps.
     Ac = 0.0_r128
     if (.false.) then
       write(*,*) m_tgt, npat, order, ref, if_adapt, t_x(1,1), s_x(1,1)
@@ -267,13 +228,6 @@ contains
     error stop
   end subroutine Lap3dDLP_closepanel_r128
 
-  ! ================================================================
-  ! lu_solve_local_r64  (private)
-  ! In-place LU with partial pivoting.  Same algorithm as
-  ! koorn_geom_mod::lu_solve, but local to avoid making the QA-legacy
-  ! r64 lu_solve public.  Sized for the small block matrices (~64x64)
-  ! used here.
-  ! ================================================================
   subroutine lu_solve_local_r64(n, A, k, B)
     integer(8), intent(in)    :: n, k
     real(r64),  intent(inout) :: A(n,n), B(n,k)
@@ -454,9 +408,11 @@ contains
 
     pi = 4.0_r64*atan(1.0_r64)
 
-    call gauss_r64(nquad, tgl, wgl, Dgl)
-    call bclaginterpweights_r64(nquad, tgl, w_bclag)
-    call legeexps_r64(2_8, nquad, tgl, Legmat, vtmp, wgl)
+    korder = nterms - 1_8
+    kpols  = nterms*(nterms+1_8)/2_8
+    call close_ref_ensure_r64(nquad, korder, kpols)
+    tgl = CREF%tgl;  wgl = CREF%wgl;  Dgl = CREF%Dgl
+    w_bclag = CREF%w_bclag;  Legmat = CREF%Legmat
 
     call circumcircle_transform_3d(r_vert, R, c0, alpha_circ)
     do i = 1, n
@@ -469,15 +425,12 @@ contains
       snxt(:,i) = matmul(R, snx(:,i))
     end do
 
-    korder = nterms - 1_8
-    kpols  = nterms*(nterms+1_8)/2_8
-    call koorn_vals2coefs_coefs2vals(korder, kpols, umatr, vmatr)
     do k = 1, sbdnp+1
       tpan(k) = real(k-1, r64)*2.0_r64*pi/real(sbdnp, r64)
     end do
     sxbd = 0.0_r64;  swbd = 0.0_r64;  stangbd = 0.0_r64;  sspbd = 0.0_r64
     r_vert_local = 0.0_r64
-    call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
+    call line3quadr_3dline(sxt, korder, kpols, CREF%umatr, nquad, tgl, wgl, Dgl, &
                            sbdnp, tpan, nbd, sxbd, swbd, stangbd, sspbd, &
                            r_vert_local)
 
@@ -587,7 +540,7 @@ contains
     complex(r64) :: Fbd(3*nquad,(order+1)**2), Fxbd(3*nquad,(order+1)**2)
     complex(r64) :: Fybd(3*nquad,(order+1)**2), Fzbd(3*nquad,(order+1)**2)
     real(r64) :: Mmatrix(4*(order*(order+1)/2),4*(order*(order+1)/2))
-    real(r64) :: sxt(3,n), umatr(n,n), vmatr(n,n), dl(nquad), dr(nquad)
+    real(r64) :: sxt(3,n), dl(nquad), dr(nquad)
     integer(8) :: idxs(m)
 
     pi     = 4.0_r64*atan(1.0_r64)
@@ -614,7 +567,7 @@ contains
 
     call cpu_time(t0)
 
-    call koorn_vals2coefs_coefs2vals(korder, kpols, umatr, vmatr)
+    call close_ref_ensure_r64(nquad, korder, kpols)
     block
       real(r64) :: tp(sbdnp+1), bx(3,3*nquad), bw(3*nquad)
       real(r64) :: bt(3,3*nquad), bs(3*nquad)
@@ -623,7 +576,7 @@ contains
       end do
       bx = 0.0_r64; bw = 0.0_r64; bt = 0.0_r64; bs = 0.0_r64
       r_vert = 0.0_r64
-      call line3quadr_3dline(sx, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
+      call line3quadr_3dline(sx, korder, kpols, CREF%umatr, nquad, tgl, wgl, Dgl, &
                              sbdnp, tp, nbd, bx, bw, bt, bs, r_vert)
     end block
 
@@ -645,7 +598,7 @@ contains
       end do
       sxbd1 = 0.0_r64; swbd1 = 0.0_r64; stangbd1 = 0.0_r64; ss = 0.0_r64
       rv = 0.0_r64
-      call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
+      call line3quadr_3dline(sxt, korder, kpols, CREF%umatr, nquad, tgl, wgl, Dgl, &
                              3_8*LEN1, tp, nb1, sxbd1, swbd1, stangbd1, ss, rv)
     end block
     block
@@ -655,7 +608,7 @@ contains
       end do
       sxbd2 = 0.0_r64; swbd2 = 0.0_r64; stangbd2 = 0.0_r64; ss = 0.0_r64
       rv = 0.0_r64
-      call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
+      call line3quadr_3dline(sxt, korder, kpols, CREF%umatr, nquad, tgl, wgl, Dgl, &
                              3_8*LEN2, tp, nb2, sxbd2, swbd2, stangbd2, ss, rv)
     end block
     block
@@ -665,7 +618,7 @@ contains
       end do
       sxbd3 = 0.0_r64; swbd3 = 0.0_r64; stangbd3 = 0.0_r64; ss = 0.0_r64
       rv = 0.0_r64
-      call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
+      call line3quadr_3dline(sxt, korder, kpols, CREF%umatr, nquad, tgl, wgl, Dgl, &
                              3_8*LEN3, tp, nb3, sxbd3, swbd3, stangbd3, ss, rv)
     end block
 

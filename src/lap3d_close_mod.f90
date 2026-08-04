@@ -530,6 +530,7 @@ contains
     real(r64) :: Legmat(nquad,nquad), bclagmatlr(nquad,2)
     real(r64) :: R(3,3), c(3), qhat(3), r_vert(3,3)
     real(r64) :: sxbd(3,3*nquad), swbd(3*nquad)
+    real(r64) :: sxbd_raw(3,3*nquad)
     real(r64) :: stangbd(3,3*nquad), sspbd(3*nquad)
     real(r64) :: sxbd1(3,3*LEN1*nquad), stangbd1(3,3*LEN1*nquad)
     real(r64) :: swbd1(3*LEN1*nquad)
@@ -568,16 +569,17 @@ contains
     call cpu_time(t0)
 
     call close_ref_ensure_r64(nquad, korder, kpols)
+    tgl = CREF%tgl;  wgl = CREF%wgl;  Dgl = CREF%Dgl
     block
-      real(r64) :: tp(sbdnp+1), bx(3,3*nquad), bw(3*nquad)
+      real(r64) :: tp(sbdnp+1), bw(3*nquad)
       real(r64) :: bt(3,3*nquad), bs(3*nquad)
       do k = 1, sbdnp+1_8
         tp(k) = real(k-1, r64)*2.0_r64*pi/real(sbdnp, r64)
       end do
-      bx = 0.0_r64; bw = 0.0_r64; bt = 0.0_r64; bs = 0.0_r64
+      sxbd_raw = 0.0_r64; bw = 0.0_r64; bt = 0.0_r64; bs = 0.0_r64
       r_vert = 0.0_r64
       call line3quadr_3dline(sx, korder, kpols, CREF%umatr, nquad, tgl, wgl, Dgl, &
-                             sbdnp, tp, nbd, bx, bw, bt, bs, r_vert)
+                             sbdnp, tp, nbd, sxbd_raw, bw, bt, bs, r_vert)
     end block
 
     call build_closepanel_precomp_r64(n, sx, snx, sw, r_vert, &
@@ -674,7 +676,9 @@ contains
              LEN2, sxbd2, stangbd2, swbd2, &
              LEN3, sxbd3, stangbd3, swbd3, &
              qhat, tgl, wgl, Dgl, w_bclag, bclagmatlr, &
-             troot, xrr, yrr, zrr, rfc, Ias)
+             troot, xrr, yrr, zrr, rfc, Ias, &
+             sxbd_raw=sxbd_raw, tx_raw=tx(:,idxs(1:ms)), &
+             Rfr=R, alpha_fr=alpha, Legmat=Legmat)
         call cpu_time(t1c);  timeinfo(5) = timeinfo(5) + (t1c - t0)
 
         t1 = 0_8;  t2 = 0_8

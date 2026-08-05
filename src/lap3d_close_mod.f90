@@ -681,6 +681,7 @@ contains
              Rfr=R, alpha_fr=alpha, Legmat=Legmat)
         call cpu_time(t1c);  timeinfo(5) = timeinfo(5) + (t1c - t0)
 
+        call cpu_time(t0)
         t1 = 0_8;  t2 = 0_8
         do ij = 0, nterms
           do k = -ij, ij
@@ -695,8 +696,14 @@ contains
         call build_tc_chialpha_r64(ms, txn, nbd, sbdnp, nquad, ncoeff, &
                                    sxbd, stangbd, sspbd, w1, w3, &
                                    Fx, Fy, Fz, Ias, Ichi, Ialpha)
+        call cpu_time(t1c);  timeinfo(6) = timeinfo(6) + (t1c - t0)
+
+        call cpu_time(t0)
         call qao_omegasdlp_r64(ms, nterms, ncoeff, h_dim, txn, Ichi, Ialpha, &
                                om_slp, om)
+        call cpu_time(t1c);  timeinfo(7) = timeinfo(7) + (t1c - t0)
+
+        call cpu_time(t0)
 
         fac = 1.0_r64/(4.0_r64*pi)/alpha
         Ocl = fac*om_slp
@@ -726,6 +733,7 @@ contains
           Omega(:,idxs(j))        = Oadd(:,j)
           IalphaAsvestas(idxs(j)) = Ias(j)
         end do
+        call cpu_time(t1c);  timeinfo(8) = timeinfo(8) + (t1c - t0)
       end block
     end if
 

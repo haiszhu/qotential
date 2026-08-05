@@ -97,7 +97,7 @@ program stellarator_bench
     end do
 
     tsrc = sum(timeinfo(1:2))
-    ttgt = sum(timeinfo(3:6))
+    ttgt = sum(timeinfo(3:8))
     write(*,'(a)') '======================'
     write(*,'(a,i4,a,i4,a,i4,a,i4)') 'Case: nterms =', nterms, &
         ',      mp =', mp, ',      np =', np, ',   isimd =', isimd
@@ -106,7 +106,7 @@ program stellarator_bench
     write(*,'(a,es12.4)')  ' source pps  ', real(nsrc,r64)/tsrc
     write(*,'(a,es12.4)')  ' target time ', ttgt
     write(*,'(a,es12.4)')  ' target pps  ', real(nsrc,r64)/ttgt
-    write(*,'(a,6es10.2)') ' timeinfo    ', timeinfo(1:5)
+    write(*,'(a,8es10.2)') ' timeinfo    ', timeinfo(1:8)
     write(*,'(a)') ' '
 
     deallocate(sx, snx, sw, rts, rps)

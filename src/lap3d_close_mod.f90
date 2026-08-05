@@ -375,7 +375,7 @@ contains
 
   subroutine build_closepanel_precomp_r64(n, sx, snx, sw, r_vert, &
                                           nterms, h_dim, nbd, sbdnp, nquad, &
-                                          alpha, exterior, &
+                                          alpha, exterior, ichart, sxbd_chart, &
                                           tgl, wgl, Dgl, w_bclag, Legmat, &
                                           R, c, sxbd, swbd, stangbd, sspbd, &
                                           qhat, Fbd, Fxbd, Fybd, Fzbd, Mmatrix)
@@ -386,6 +386,8 @@ contains
     use linequaaadrature_mod,  only: legeexps_r64
     integer(8), intent(in)  :: n, nterms, h_dim, nbd, sbdnp, nquad
     real(r64),  intent(in)  :: sx(3,n), snx(3,n), sw(n), r_vert(3,3), alpha
+    integer(8), intent(in)  :: ichart
+    real(r64),  intent(in)  :: sxbd_chart(3,nbd)
     logical,    intent(in)  :: exterior
     real(r64),  intent(out) :: tgl(nquad), wgl(nquad), Dgl(nquad,nquad)
     real(r64),  intent(out) :: w_bclag(nquad), Legmat(nquad,nquad)
@@ -433,6 +435,32 @@ contains
     call line3quadr_3dline(sxt, korder, kpols, CREF%umatr, nquad, tgl, wgl, Dgl, &
                            sbdnp, tpan, nbd, sxbd, swbd, stangbd, sspbd, &
                            r_vert_local)
+
+    if (ichart == 1_8) then
+      block
+        real(r64) :: sxp(3,nbd), pt, sw0(nbd)
+        integer(8) :: ell, i0, i1, iq
+        do i = 1, nbd
+          sxbd(:,i) = alpha*matmul(R, sxbd_chart(:,i) - c)
+        end do
+        pt = 2.0_r64*pi/real(sbdnp, r64)
+        do ell = 1, sbdnp
+          i0 = (ell-1_8)*nquad + 1_8
+          i1 = ell*nquad
+          sxp(1,i0:i1) = (2.0_r64/pt)*matmul(Dgl, sxbd(1,i0:i1))
+          sxp(2,i0:i1) = (2.0_r64/pt)*matmul(Dgl, sxbd(2,i0:i1))
+          sxp(3,i0:i1) = (2.0_r64/pt)*matmul(Dgl, sxbd(3,i0:i1))
+          do iq = 1, nquad
+            sw0(i0+iq-1_8) = 0.5_r64*wgl(iq)*pt
+          end do
+        end do
+        sspbd = sqrt(sxp(1,:)**2 + sxp(2,:)**2 + sxp(3,:)**2)
+        stangbd(1,:) = sxp(1,:)/sspbd
+        stangbd(2,:) = sxp(2,:)/sspbd
+        stangbd(3,:) = sxp(3,:)/sspbd
+        swbd = sw0*sspbd
+      end block
+    end if
 
     sspbd = (pi/real(sbdnp, r64))*sspbd
 
@@ -501,6 +529,7 @@ contains
 
   subroutine rrq_r64(m, tx, n, sx, snx, sw, rts, rps, &
                      order, nquad, orderff, distff, exterior, isimd, &
+                     ichart, sxbd_chart, rv_chart, &
                      As, Ad, Omega, IalphaAsvestas, timeinfo)
     use patch_refine_mod, only: patch_levels_t, build_patch_levels_r64, &
                                 lap3dsdlpmat_levels_r64
@@ -516,6 +545,8 @@ contains
     real(r64),  intent(out)   :: Omega(4*(order*(order+1)/2),m)
     real(r64),  intent(out)   :: IalphaAsvestas(m)
     real(r64),  intent(inout) :: timeinfo(20)
+    integer(8), intent(in)    :: ichart
+    real(r64),  intent(in)    :: sxbd_chart(3,3*nquad), rv_chart(3,3)
 
     integer(8), parameter :: LEN1 = 2_8, LEN2 = 4_8, LEN3 = 8_8  ! rrq :9239
     integer(8), parameter :: NLEVEL = 4_8
@@ -581,10 +612,12 @@ contains
       call line3quadr_3dline(sx, korder, kpols, CREF%umatr, nquad, tgl, wgl, Dgl, &
                              sbdnp, tp, nbd, sxbd_raw, bw, bt, bs, r_vert)
     end block
+    if (ichart == 1_8) sxbd_raw = sxbd_chart
 
+    if (ichart == 1_8) r_vert = rv_chart
     call build_closepanel_precomp_r64(n, sx, snx, sw, r_vert, &
                                       nterms, h_dim, nbd, sbdnp, nquad, &
-                                      alpha, exterior, &
+                                      alpha, exterior, ichart, sxbd_chart, &
                                       tgl, wgl, Dgl, w_bclag, Legmat, &
                                       R, c, sxbd, swbd, stangbd, sspbd, &
                                       qhat, Fbd, Fxbd, Fybd, Fzbd, Mmatrix)
@@ -704,7 +737,6 @@ contains
         call cpu_time(t1c);  timeinfo(7) = timeinfo(7) + (t1c - t0)
 
         call cpu_time(t0)
-
         fac = 1.0_r64/(4.0_r64*pi)/alpha
         Ocl = fac*om_slp
         Oadd(        1:  h_dim, :) =  om(:,:,1)

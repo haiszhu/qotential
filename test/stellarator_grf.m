@@ -1,5 +1,4 @@
 
-
 if ~exist('rrqdir', 'var') || isempty(rrqdir)
   error('stellarator_grf:rrqdir', ...
         'Set rrqdir to the rrq checkout that holds test/stellarator (setup() and the .dat live there), then rerun.');
@@ -7,17 +6,20 @@ end
 addpath(rrqdir);                                   % rrq-legacy root
 addpath(fullfile(rrqdir, 'test', 'stellarator'));  % the .dat files
 addpath(fullfile(fileparts(mfilename('fullpath')), '..', 'matlab'));  % qol_*
+addpath(fullfile(fileparts(mfilename('fullpath')), '..', 'utils'));
 cd(fullfile(rrqdir, 'test', 'stellarator'));       % setup() and fopen are relative
 setup()
 
 isimd = 0;
 
-MyOrder = [4 6 8 10 12 14];
+ichart = 1;
+
+MyOrder = [4 6 8 10 12 14 16];
 MyMp = 12*[1 2 3 4 5 6 7 8];
 MyNp = 36*[1 2 3 4 5 6 7 8];
-MyTol = [1e-04 1e-06 1e-08 1e-09 1e-10 1e-12];
+MyTol = [1e-04 1e-06 1e-08 1e-09 1e-11 1e-14 1e-14];
 
-JJ = [2 2 3 3 4 5];
+JJ = [2 2 3 3 4 5 6];
 MyErr = zeros(numel(JJ),1);
 MyFMMtime = zeros(numel(JJ),1);
 MyptswiseErr = [];
@@ -27,31 +29,21 @@ for idx = 1:numel(JJ)
   so.mp = MyMp(JJ(idx)); 
   so.np = MyNp(JJ(idx)); 
 
-  side = 'e';
-  type = 'stellarator', o = []; o.fquad = false; o.p = order;
-
-  [pan0 N] = create_panels(type,so,o);
-
-  pan1 = stellarator_pan_init(pan0,order,1);
-  pan0 = pan1;
-  pan = []; panbd = []; 
-  nquad = order;
-  for k = 1:numel(pan0)
-    [sk,su,s_sub] = get_high_order_quad(pan0{k},order,'T',side);
-    [sl,sr,slf,srf,slf_cell,srf_cell] = get_vioreanu_quadr(sk.x,order,order);
-    sl.rts = 2*sl.xpt; sl.rps = 2*sl.xps; % between tp and vr grid
-    sr.rts = 2*sr.xpt; sr.rps = 2*sr.xps;
-    pan{2*(k-1)+1} = sl;
-    pan{2*(k-1)+2} = sr;
-    h_dim = order*(order+1)/2;
-  end
-
-  sx = cellfun(@(p)p.x,pan,'uniformoutput',0); sx = horzcat(sx{:});
-  snx = cellfun(@(p)p.nx,pan,'uniformoutput',0); snx = horzcat(snx{:});
-  sw = cellfun(@(p)p.w,pan,'uniformoutput',0); sw = horzcat(sw{:});
-  rts = cellfun(@(p)p.rts,pan,'uniformoutput',0); rts = horzcat(rts{:});
-  rps = cellfun(@(p)p.rps,pan,'uniformoutput',0); rps = horzcat(rps{:});
+  [xg,wg,Dg] = gauss(order);
+  [uvs,wts]  = get_vioreanu_nodes(order-1);
+  [sx,snx,sw,rts,rps,npan] = stellarator_geo_mex(so.mp,so.np,order,xg,wg,Dg,uvs,wts);
   s.x = sx; s.nx = snx; s.w = sw; s.rts = rts; s.rps = rps;
+  h_dim = order*(order+1)/2;
+
+  pan = cell(1,npan);
+  for k = 1:npan
+    kk = (k-1)*h_dim + (1:h_dim);
+    pan{k}.x   = sx(:,kk);
+    pan{k}.nx  = snx(:,kk);
+    pan{k}.w   = sw(kk);
+    pan{k}.rts = rts(:,kk);
+    pan{k}.rps = rps(:,kk);
+  end
 
   [f, gradf]= torus_surf_den(); % for GRF
   ub = f(sx)'; ubn = sum(snx.*gradf(sx),1)';  % boundary u, and partial u partial normal
@@ -71,6 +63,27 @@ for idx = 1:numel(JJ)
   nquad = order + nquadadd;
   nterms = order;
   timeinfo = zeros(20,1);
+
+  sbdnp = 3;  nbd = sbdnp*nquad;
+  if ichart
+    [xq,~,~]   = gauss(nquad);
+    tpan = (0:sbdnp)'*2*pi/sbdnp;
+    th1 = 2*pi/3;  th2 = 4*pi/3;  thi1 = 1/th1;
+    uvbd = zeros(2,nbd+3);
+    for e = 1:sbdnp
+      for q = 1:nquad
+        tt = tpan(e) + 0.5*(1+xq(q))*(tpan(e+1)-tpan(e));
+        if tt < th1
+          uvbd(:,(e-1)*nquad+q) = [0; 1 - thi1*tt];
+        elseif tt < th2
+          uvbd(:,(e-1)*nquad+q) = [thi1*(tt-th1); 0];
+        else
+          uvbd(:,(e-1)*nquad+q) = [1 - thi1*(tt-th2); thi1*(tt-th2)];
+        end
+      end
+    end
+    uvbd(:,nbd+1) = [0;0];  uvbd(:,nbd+2) = [1;0];  uvbd(:,nbd+3) = [0;1];
+  end
   mp = so.mp; 
   np = so.np;
   hdim = order*(order+1)/2;
@@ -118,8 +131,14 @@ for idx = 1:numel(JJ)
     
     distff = 1.4;
     IalphaAsvestas2 = zeros(size(IalphaAsvestas));
+    if ichart
+      xbuf = stellarator_geo_mex(so.mp,so.np,order,xg,wg,Dg,uvs,wts, k, uvbd);
+    else
+      xbuf = zeros(3,nbd+3);
+    end
     [S_ij,K_ij,Omegas2,IalphaAsvestas2,timeinfo] = qol_rrq_mex(m,tx,iside,order,h_dim,nquad, ...
                              n,sxk,swk,snxk,rtsk,rpsk,orderff,distff,isimd, ...
+                             ichart,xbuf(:,1:nbd),xbuf(:,nbd+1:nbd+3), ...
                              S_ij,K_ij,Omegas,IalphaAsvestas2,timeinfo);
   
     js = (k-1)*len+(1:len); 
@@ -144,7 +163,6 @@ for idx = 1:numel(JJ)
           idx, order, so.mp, so.np, numel(sx(1,:)), MyErr(idx), fmmtime);
   save('stellarator.mat',"MyErr","MyptswiseErr","MyFMMtime");
 end
-
 
 function [sl,su,s_sub] = get_high_order_quad(pan,order,qntype,side)
 [x,w,D]=gauss(order); [x1 x2] = meshgrid(x); ww = w(:)*w(:)'; 
@@ -240,7 +258,7 @@ for k=1:numel(pan)
     tpansiz1 = pan0{k}.para(4);
     tpansiz2 = pan0{k}.para(5);
     pank1.chart = @(t) stellaratorparam((t(1,:)+orig-1+2*j)*tpansiz1,((t(2,:)/2-1/2)+orig-1+2*i)*tpansiz2); 
-    pank2.chart = @(t) stellaratorparam((t(1,:)+orig-1+2*j)*tpansiz1,((t(2,:)/2-1/2)+orig-1+2*i)*tpansiz2); 
+    pank2.chart = @(t) stellaratorparam((t(1,:)+orig-1+2*j)*tpansiz1,((t(2,:)/2+1/2)+orig-1+2*i)*tpansiz2);
     pan2{k+addind} = pank1;
     pan2{k+addind+1} = pank2;
     addind = addind+1;
@@ -253,6 +271,5 @@ for k = 1:numel(pan2)
   pan2{k} = get_gl_quadr(sxk,order);
 end
 pan3 = pan2;
-
 
 end

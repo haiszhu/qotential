@@ -2,6 +2,7 @@
 program stellarator_bench
   use quatapproximation_mod, only: r64
   use lap3d_close_mod, only: rrq_r64
+  use patch_refine_mod, only: PR_ADAPTIVE, PR_SQUARE
   implicit none
 
   character(len=200) :: DATDIR
@@ -12,7 +13,7 @@ program stellarator_bench
   integer(8), parameter :: NP_L(NC)    = [72_8, 72_8,108_8,108_8,144_8,180_8]
 
   integer(8) :: nterms, mp, np, npan, nsrc, m, k, j, i, hdim, nquad, orderff
-  integer(8) :: ncases, icase, itarg, isimd
+  integer(8) :: ncases, icase, itarg, isimd, iadap
   real(r64)  :: mpr, npr, ntr, hdr, nqr, npr2, ofr
   real(r64)  :: distff, timeinfo(20), qradii, qpoint(3), tsrc, ttgt
   logical    :: exterior
@@ -21,6 +22,7 @@ program stellarator_bench
   real(r64),  allocatable :: sxk(:,:), snxk(:,:), swk(:), rtsk(:,:), rpsk(:,:)
   real(r64),  allocatable :: tcx(:,:), S_ij(:,:), K_ij(:,:)
   real(r64),  allocatable :: Omegas(:,:), IalphaAsvestas(:)
+  real(r64),  allocatable :: sxbd0(:,:), rv0(:,:)
   logical,    allocatable :: near(:)
   integer(8), allocatable :: idxk(:)
 
@@ -35,8 +37,14 @@ program stellarator_bench
   if (command_argument_count() >= 2) then
     call get_command_argument(2, arg);  read(arg,*) isimd
   end if
+  iadap = 0_8
+  if (command_argument_count() >= 3) then
+    call get_command_argument(3, arg);  read(arg,*) iadap
+  end if
+  PR_ADAPTIVE = (iadap == 1_8)
+  if (iadap == 1_8 .or. iadap == 3_8) PR_SQUARE = .false.
   DATDIR = './'
-  if (command_argument_count() >= 3) call get_command_argument(3, DATDIR)
+  if (command_argument_count() >= 4) call get_command_argument(4, DATDIR)
   exterior = .true.          ! rrq's iside = 30
 
   do icase = 1, min(ncases, NC)
@@ -62,6 +70,7 @@ program stellarator_bench
     distff   = 1.4_r64
     timeinfo = 0.0_r64
     allocate(idxk(hdim), sxk(3,hdim), snxk(3,hdim), swk(hdim))
+    allocate(sxbd0(3,3*nquad), rv0(3,3));  sxbd0 = 0.0_r64;  rv0 = 0.0_r64
     allocate(rtsk(3,hdim), rpsk(3,hdim), near(nsrc))
 
     do k = 1, npan
@@ -91,6 +100,7 @@ program stellarator_bench
 
       call rrq_r64(m, tcx, hdim, sxk, snxk, swk, rtsk, rpsk, &
                    nterms, nquad, orderff, distff, exterior, isimd, &
+                   0_8, sxbd0, rv0, &
                    S_ij, K_ij, Omegas, IalphaAsvestas, timeinfo)
 
       deallocate(tcx, S_ij, K_ij, Omegas, IalphaAsvestas)
@@ -99,8 +109,9 @@ program stellarator_bench
     tsrc = sum(timeinfo(1:2))
     ttgt = sum(timeinfo(3:8))
     write(*,'(a)') '======================'
-    write(*,'(a,i4,a,i4,a,i4,a,i4)') 'Case: nterms =', nterms, &
-        ',      mp =', mp, ',      np =', np, ',   isimd =', isimd
+    write(*,'(a,i4,a,i4,a,i4,a,i4,a,i2)') 'Case: nterms =', nterms, &
+        ',      mp =', mp, ',      np =', np, ',   isimd =', isimd, &
+        ',  iadap =', iadap
     write(*,'(a,i0)')      ' nsrc        ', nsrc
     write(*,'(a,es12.4)')  ' source time ', tsrc
     write(*,'(a,es12.4)')  ' source pps  ', real(nsrc,r64)/tsrc
@@ -110,7 +121,8 @@ program stellarator_bench
     write(*,'(a)') ' '
 
     deallocate(sx, snx, sw, rts, rps)
-    deallocate(idxk, sxk, snxk, swk, rtsk, rpsk, near)
+    deallocate(idxk, sxk, snxk, swk, rtsk, rpsk, near, sxbd0, rv0)
   end do
 
 end program stellarator_bench
+

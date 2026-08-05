@@ -1,12 +1,3 @@
-! qotential/src/lap3d_close_mex.f90
-!
-! Top-level mwrap wrapper(s) for the BIE-solver glue routines in
-! lap3d_close_mod.  Symbol prefix: qol_ (QOtential, Lap3d-close).
-!
-! No module-mangling -- these are free-standing externals so mwrap
-! can bind to them directly via the # FORTRAN line in qotential.mw.
-! All arguments cross the boundary as integer(8) or double precision
-! (matlab-fortran-skill conventions).
 
 subroutine qol_lap3ddlp_closepanel_mex(m_tgt, t_x, npat, s_x, order, ref, &
                                         if_adapt_d, Ac)
@@ -23,9 +14,8 @@ subroutine qol_lap3ddlp_closepanel_mex(m_tgt, t_x, npat, s_x, order, ref, &
   call Lap3dDLP_closepanel_r64(m_tgt, t_x, npat, s_x, order, ref, if_adapt, Ac)
 end subroutine qol_lap3ddlp_closepanel_mex
 
-
 subroutine qol_rrq_mex(m, tx, iside, order, h_dim, nquad, n, sx, sw, snx, &
-                       rts, rps, orderff, distff, isimd, &
+                       rts, rps, orderff, distff, isimd, ichart, sxbd_chart, rv_chart, &
                        As, Ad, Omega, IalphaAsvestas, timeinfo)
   use lap3d_close_mod, only: rrq_r64
   implicit none
@@ -36,8 +26,11 @@ subroutine qol_rrq_mex(m, tx, iside, order, h_dim, nquad, n, sx, sw, snx, &
   real(8),    intent(inout) :: As(m,n), Ad(m,n)
   real(8),    intent(inout) :: Omega(4*h_dim,m), IalphaAsvestas(m)
   real(8),    intent(inout) :: timeinfo(20)
+  integer(8), intent(in)    :: ichart
+  real(8),    intent(in)    :: sxbd_chart(3,3*nquad), rv_chart(3,3)
 
   call rrq_r64(m, tx, n, sx, snx, sw, rts, rps, order, nquad, orderff, &
                distff, mod(iside,10_8) == 0_8, isimd, &
+               ichart, sxbd_chart, rv_chart, &
                As, Ad, Omega, IalphaAsvestas, timeinfo)
 end subroutine qol_rrq_mex

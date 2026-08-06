@@ -67,11 +67,17 @@ LIBS := $(BLD)/libqotential.a \
         $(HDF5_LIBS) $(LAPACK_LIBS) -lgfortran -lquadmath -lm
 
 BIN   := $(BLD)/stellarator_bench
+SGRF_SRC := stellarator_grf.f90
+SGRF_BIN := $(BLD)/stellarator_grf
+GEO_C    := ../utils/stellarator_geo_mex.c
+FMM3D_DIR ?= $(HOME)/git/FMM3D
+FMM3D_LIB := $(FMM3D_DIR)/lib-static/libfmm3d.a
+SGRF_BLAS ?= -L$(BREW)/opt/openblas-threaded/lib -lopenblas
 N     ?= 1
 ISIMD ?= 0
 DATDIR ?= ./
 
-.PHONY: all run clean
+.PHONY: all run sgrf clean
 
 all: $(BIN)
 
@@ -79,8 +85,18 @@ $(BIN): stellarator_bench.f90 $(BLD)/libqotential.a
 	$(FC) $(FFLAGS) $< $(LIBS) -o $@
 	@echo "built $@"
 
+sgrf: $(SGRF_BIN)
+
+$(SGRF_BIN): $(SGRF_SRC) $(GEO_C) $(BLD)/libqotential.a
+	$(CC) -O3 -c $(GEO_C) -o $(BLD)/stellarator_geo.o
+	$(FC) $(FFLAGS) $< $(BLD)/stellarator_geo.o $(FMM3D_LIB) \
+	  $(BLD)/libqotential.a $(QA_DIR)/build/libQuatApproximation.a \
+	  $(LQ_DIR)/build/libLineQuaaadrature.a \
+	  $(HDF5_LIBS) $(SGRF_BLAS) -lgfortran -lquadmath -lm -o $@
+	@echo "built $@"
+
 run: $(BIN)
 	cd $(ROOT) && OMP_NUM_THREADS=1 ./build/stellarator_bench $(N) $(ISIMD) $(DATDIR)
 
 clean:
-	rm -f $(BIN)
+	rm -f $(BIN) $(SGRF_BIN)

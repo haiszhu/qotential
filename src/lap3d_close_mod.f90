@@ -548,7 +548,7 @@ contains
     integer(8), intent(in)    :: ichart
     real(r64),  intent(in)    :: sxbd_chart(3,3*nquad), rv_chart(3,3)
 
-    integer(8), parameter :: LEN1 = 2_8, LEN2 = 4_8, LEN3 = 8_8  ! rrq :9239
+    integer(8), parameter :: LEN1 = 4_8, LEN2 = 8_8, LEN3 = 16_8  ! rrq :9239
     integer(8), parameter :: NLEVEL = 4_8
     real(r64),  parameter :: RHO_SSQ = 100.0_r64                 ! rrq :609
 
@@ -710,6 +710,7 @@ contains
              LEN3, sxbd3, stangbd3, swbd3, &
              qhat, tgl, wgl, Dgl, w_bclag, bclagmatlr, &
              troot, xrr, yrr, zrr, rfc, Ias, &
+             rho_in=8.0_r64**(8.0_r64/real(nquad, r64)), &
              sxbd_raw=sxbd_raw, tx_raw=tx(:,idxs(1:ms)), &
              Rfr=R, alpha_fr=alpha, Legmat=Legmat)
         call cpu_time(t1c);  timeinfo(5) = timeinfo(5) + (t1c - t0)

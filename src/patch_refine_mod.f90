@@ -53,6 +53,7 @@ module patch_refine_mod
   logical,    save :: PR_SQUARE = .true.
   integer(8), save :: PR_QGL = 0_8
   real(r64), allocatable, save :: WS_Ab(:,:), WS_Bb(:,:), WS_Cb(:,:)
+  !$omp threadprivate(WS_Ab, WS_Bb, WS_Cb)
 
   type :: cut_cache_t
     integer(8) :: mask = -1_8, ng = 0_8
@@ -61,6 +62,7 @@ module patch_refine_mod
   integer(8), parameter :: NCUTC = 128_8
   type(cut_cache_t), save :: CUTC(NCUTC)
   integer(8), save :: ncutn = 0_8, cutc_key = -1_8
+  !$omp threadprivate(CUTC, ncutn, cutc_key)
 
   type :: patch_levels_t
     integer(8) :: nlevel = 0_8

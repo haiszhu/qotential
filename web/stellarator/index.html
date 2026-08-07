@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="A browser-local stellarator close-evaluation demo compiled from the qpotential Fortran solver." />
+    <title>Stellarator · Fortran WebAssembly Solver</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">qpotential · browser laboratory</p>
+          <h1>Stellarator close evaluation</h1>
+        </div>
+        <p class="subtitle">The production Fortran numerical path, compiled through LFortran and Emscripten. Computation stays inside this browser tab.</p>
+      </header>
+
+      <section class="workspace" aria-label="Stellarator solver workspace">
+        <aside class="control-panel">
+          <section>
+            <p class="section-label">Solver</p>
+            <p class="solver-name">Laplace GRF</p>
+            <p class="solver-note">Naive direct kernel with close-panel correction on a coarse stellarator discretization.</p>
+          </section>
+
+          <section>
+            <p class="section-label">Configuration</p>
+            <div class="parameters">
+              <label class="parameter" for="surface-input">
+                <span>surface</span>
+                <select id="surface-input">
+                  <option value="builtin" selected>built-in stellarator</option>
+                  <option value="w7x">W7-X (288 VMEC modes)</option>
+                </select>
+              </label>
+              <label class="parameter" for="restol-input">
+                <span>restol (W7-X)</span>
+                <input id="restol-input" type="number" inputmode="decimal"
+                       min="0" step="any" value="0.1" disabled />
+              </label>
+              <label class="parameter" for="order-input">
+                <span>order</span>
+                <select id="order-input">
+                  <option value="4" selected>4</option>
+                  <option value="6">6</option>
+                  <option value="8">8</option>
+                  <option value="10">10</option>
+                  <option value="12">12</option>
+                  <option value="14">14</option>
+                  <option value="16">16</option>
+                </select>
+              </label>
+              <div class="parameter"><span>SIMD</span><strong>off</strong></div>
+              <label class="parameter" for="mp-input">
+                <span>m panels</span>
+                <input id="mp-input" type="number" inputmode="numeric" min="1" step="1" value="12" />
+              </label>
+              <label class="parameter" for="np-input">
+                <span>n panels</span>
+                <input id="np-input" type="number" inputmode="numeric" min="1" step="1" value="36" />
+              </label>
+            </div>
+            <p class="run-advisory" id="run-advisory" role="status" hidden></p>
+          </section>
+
+          <section>
+            <button class="run-button" id="run-solver" type="button" disabled>Run Fortran solver</button>
+            <div class="status-line" aria-live="polite">
+              <span class="status-dot" id="status-dot" data-state="idle"></span>
+              <span id="run-status">Initializing WebGPU</span>
+            </div>
+          </section>
+
+          <section class="solver-log-section" aria-label="Solver progress">
+            <p class="section-label">Run log</p>
+            <div id="solver-log" class="solver-log" role="log"
+                 aria-relevant="additions" aria-atomic="false"></div>
+          </section>
+
+          <section>
+            <p class="section-label">Result</p>
+            <div class="metrics">
+              <div class="metric"><span>GRF max rel. error</span><strong id="grf-value">—</strong></div>
+              <div class="metric"><span>source nodes</span><strong id="source-value">—</strong></div>
+              <div class="metric"><span>render faces</span><strong id="face-value">—</strong></div>
+              <div class="metric"><span>browser solve</span><strong id="time-value">—</strong></div>
+            </div>
+          </section>
+
+          <p class="control-footer">REAL(8) · WASM32 · WEB WORKER<br />NO FMM · NO SERVER COMPUTE</p>
+          <p class="control-footer">Compiled from this project's Fortran with
+            <a href="https://lfortran.org" rel="noopener">LFortran</a>
+            (pinned commit + local patches, pending upstream) and
+            <a href="https://emscripten.org" rel="noopener">Emscripten</a> ·
+            <a href="THIRD_PARTY_NOTICES.txt" rel="noopener">third-party notices</a></p>
+        </aside>
+
+        <div class="viewport">
+          <canvas id="stellarator-canvas" aria-label="Interactive stellarator error field"></canvas>
+          <p class="canvas-placeholder" id="canvas-placeholder">Run the solver to generate the stellarator mesh and close-evaluation error field.</p>
+          <span class="method-badge">WebGPU renderer</span>
+          <div class="legend" aria-label="log base ten error color scale">
+            <div class="legend-title"><span>log₁₀ |error|</span><span>fixed scale</span></div>
+            <div class="legend-bar"></div>
+            <div class="legend-scale"><span>−16</span><span>−12</span><span>−8</span><span>−4</span><span>0</span></div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

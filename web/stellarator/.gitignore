@@ -1,0 +1,9 @@
+build-wasm/
+dist/
+node_modules/
+public/wasm/*
+!public/wasm/solver.js
+!public/wasm/solver.wasm
+!public/wasm/SHA256SUMS
+__pycache__/
+*.py[cod]

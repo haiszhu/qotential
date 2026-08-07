@@ -1,4 +1,4 @@
-# qotential-legacy/test/Makefile
+# qotential/test/Makefile
 #
 # Throughput benchmark for rrq_r64, ported from
 # rrq-legacy/test/stellarator/stellarator.f.  Same driver, same data, the
@@ -22,8 +22,8 @@
 #     6    14    60  180               888 MB
 #
 # The package libraries must be built first:
-#   ( cd ../../LineQuaaadrature-legacy && make lib )
-#   ( cd ../../QuatApproximation-legacy && make lib )
+#   ( cd ../external/LineQuaaadrature && make lib )
+#   ( cd ../external/QuatApproximation && make lib )
 #   ( cd ..                             && make lib )
 
 ROOT   := $(abspath $(dir $(abspath $(lastword $(MAKEFILE_LIST))))/..)
@@ -68,7 +68,13 @@ LIBS := $(BLD)/libqotential.a \
 
 BIN   := $(BLD)/stellarator_bench
 SGRF_SRC := stellarator_grf.f90
+W7X_SRC := ../web/stellarator/fortran/w7x_modes_mod.f90
+W7X_OBJ := $(BLD)/w7x_modes_mod.o
+SGRF_CORE_SRC := ../web/stellarator/fortran/stellarator_grf_core_mod.f90
+SGRF_CORE_OBJ := $(BLD)/stellarator_grf_core_mod.o
 SGRF_BIN := $(BLD)/stellarator_grf
+DIRECT_SRC := ../web/stellarator/native/stellarator_direct_main.f90
+DIRECT_BIN := $(BLD)/stellarator_direct
 GEO_C    := ../utils/stellarator_geo_mex.c
 FMM3D_DIR ?= $(HOME)/git/FMM3D
 FMM3D_LIB := $(FMM3D_DIR)/lib-static/libfmm3d.a
@@ -77,7 +83,7 @@ N     ?= 1
 ISIMD ?= 0
 DATDIR ?= ./
 
-.PHONY: all run sgrf clean
+.PHONY: all run sgrf sgrf_direct clean
 
 all: $(BIN)
 
@@ -87,11 +93,28 @@ $(BIN): stellarator_bench.f90 $(BLD)/libqotential.a
 
 sgrf: $(SGRF_BIN)
 
-$(SGRF_BIN): $(SGRF_SRC) $(GEO_C) $(BLD)/libqotential.a
+$(W7X_OBJ): $(W7X_SRC) $(BLD)/libqotential.a
+	$(FC) $(FFLAGS) -J$(BLD) -c $< -o $@
+
+$(SGRF_CORE_OBJ): $(SGRF_CORE_SRC) $(W7X_OBJ) $(BLD)/libqotential.a
+	$(FC) $(FFLAGS) -cpp -J$(BLD) -c $< -o $@
+
+$(SGRF_BIN): $(SGRF_CORE_OBJ) $(SGRF_SRC) $(GEO_C) $(BLD)/libqotential.a
 	$(CC) -O3 -c $(GEO_C) -o $(BLD)/stellarator_geo.o
-	$(FC) $(FFLAGS) $< $(BLD)/stellarator_geo.o $(FMM3D_LIB) \
+	$(FC) $(FFLAGS) $(SGRF_SRC) $(SGRF_CORE_OBJ) $(W7X_OBJ) \
+	  $(BLD)/stellarator_geo.o $(FMM3D_LIB) \
 	  $(BLD)/libqotential.a $(QA_DIR)/build/libQuatApproximation.a \
 	  $(LQ_DIR)/build/libLineQuaaadrature.a \
+	  $(HDF5_LIBS) $(SGRF_BLAS) -lgfortran -lquadmath -lm -o $@
+	@echo "built $@"
+
+sgrf_direct: $(DIRECT_BIN)
+
+$(DIRECT_BIN): $(SGRF_CORE_OBJ) $(W7X_OBJ) $(DIRECT_SRC) $(GEO_C) $(BLD)/libqotential.a
+	$(CC) -O3 -c $(GEO_C) -o $(BLD)/stellarator_geo.o
+	$(FC) $(FFLAGS) $(DIRECT_SRC) $(SGRF_CORE_OBJ) $(W7X_OBJ) \
+	  $(BLD)/stellarator_geo.o $(FMM3D_LIB) $(BLD)/libqotential.a \
+	  $(QA_DIR)/build/libQuatApproximation.a $(LQ_DIR)/build/libLineQuaaadrature.a \
 	  $(HDF5_LIBS) $(SGRF_BLAS) -lgfortran -lquadmath -lm -o $@
 	@echo "built $@"
 
@@ -99,4 +122,5 @@ run: $(BIN)
 	cd $(ROOT) && OMP_NUM_THREADS=1 ./build/stellarator_bench $(N) $(ISIMD) $(DATDIR)
 
 clean:
-	rm -f $(BIN) $(SGRF_BIN)
+	rm -f $(BIN) $(SGRF_BIN) $(DIRECT_BIN) $(SGRF_CORE_OBJ) $(W7X_OBJ) \
+	  $(BLD)/stellarator_grf_core_mod.mod $(BLD)/w7x_modes_mod.mod

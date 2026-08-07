@@ -1,0 +1,82 @@
+{
+  "bytes": 13992048,
+  "compilerVersion": "GNU Fortran (Homebrew GCC 16.1.0) 16.1.0",
+  "fields": [
+    "sx",
+    "snx",
+    "sw",
+    "ub",
+    "ubn",
+    "u",
+    "render_xyz",
+    "render_log_error",
+    "render_triangles"
+  ],
+  "float": "little-endian-f64",
+  "grfError": 0.002315938866122628,
+  "integer": "little-endian-i64",
+  "isimd": 0,
+  "mp": 12,
+  "nativeOutput": "close loop on 1 threads (timeinfo is cpu-summed across threads)\n  phases: ballcount    0.526 s | rrq+fill    8.039 s | scatter    0.002 s\nDIRECT ntri=5500 nsrc=115500 nrender=82500 GRF max rel err=  2.3159388661226281E-03",
+  "nfaces": 88000,
+  "np": 36,
+  "nrender": 82500,
+  "nsrc": 115500,
+  "ntri": 5500,
+  "offsets": {
+    "render_log_error": {
+      "bytes": 660000,
+      "count": 82500,
+      "offset": 11220048
+    },
+    "render_triangles": {
+      "bytes": 2112000,
+      "count": 264000,
+      "offset": 11880048
+    },
+    "render_xyz": {
+      "bytes": 1980000,
+      "count": 247500,
+      "offset": 9240048
+    },
+    "snx": {
+      "bytes": 2772000,
+      "count": 346500,
+      "offset": 2772048
+    },
+    "sw": {
+      "bytes": 924000,
+      "count": 115500,
+      "offset": 5544048
+    },
+    "sx": {
+      "bytes": 2772000,
+      "count": 346500,
+      "offset": 48
+    },
+    "u": {
+      "bytes": 924000,
+      "count": 115500,
+      "offset": 8316048
+    },
+    "ub": {
+      "bytes": 924000,
+      "count": 115500,
+      "offset": 6468048
+    },
+    "ubn": {
+      "bytes": 924000,
+      "count": 115500,
+      "offset": 7392048
+    }
+  },
+  "order": 6,
+  "restol": 0.1,
+  "schema": 1,
+  "sha256": "9dc62c366876d619a5b9ffea7f02947695dbf824c85630f62b62f76fdcbc22fc",
+  "surface": "w7x",
+  "targetBlock": 64,
+  "tolerances": {
+    "nativeRepeatAbsolute": 0.0
+  }
+}

@@ -1,0 +1,295 @@
+# LFortran-only build for the stellarator browser work.
+#
+# This file deliberately does not include or modify the existing Makefiles.
+# All generated modules and objects live under build-lfortran/.
+
+SHELL := /bin/bash
+# The LLVM stage is `lfortran ... | perl fix-lfortran-llvm.pl > out.ll`.  Without
+# pipefail the pipeline reports perl's status, so a compiler failure leaves a
+# truncated .ll and only surfaces as a confusing clang error further down.
+.SHELLFLAGS := -o pipefail -c
+.DELETE_ON_ERROR:
+
+ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+ROOT := $(patsubst %/,%,$(ROOT))
+
+QA_DIR  := $(ROOT)/external/QuatApproximation
+LQ_DIR  := $(ROOT)/external/LineQuaaadrature
+BLD_DIR := $(ROOT)/build-lfortran
+MOD_DIR := $(BLD_DIR)/modules
+IR_DIR  := $(BLD_DIR)/llvm
+
+LF ?= lfortran
+CLANG ?= clang
+PERL ?= perl
+GFORTRAN ?= $(shell for compiler in gfortran-16 gfortran-15 gfortran-14 \
+                     gfortran-13 gfortran; do \
+                     command -v $$compiler >/dev/null 2>&1 && \
+                     { echo $$compiler; exit 0; }; done; echo gfortran)
+
+UNAME := $(shell uname)
+ifeq ($(UNAME),Darwin)
+  OPENBLAS_DIR ?= $(shell brew --prefix openblas-threaded 2>/dev/null)
+  LIBOMP_DIR   ?= $(shell brew --prefix libomp 2>/dev/null)
+  GFORTRAN_RUNTIME := $(shell $(GFORTRAN) -print-file-name=libgfortran.dylib)
+else
+  OPENBLAS_DIR ?=
+  LIBOMP_DIR   ?=
+  GFORTRAN_RUNTIME := $(shell $(GFORTRAN) -print-file-name=libgfortran.so)
+endif
+
+FMM3D_DIR ?= $(HOME)/git/FMM3D
+FMM3D_LIB ?= $(FMM3D_DIR)/lib-static/libfmm3d.a
+LF_BIN := $(shell command -v $(LF) 2>/dev/null || echo $(LF))
+LF_RUNTIME_INSTALLED := $(abspath $(dir $(LF_BIN))/../share/lfortran/lib/liblfortran_runtime_static.a)
+LF_RUNTIME_BUILD     := $(abspath $(dir $(LF_BIN))/../runtime/legacy/liblfortran_runtime_static.a)
+LF_RUNTIME_FOUND     := $(firstword $(wildcard $(LF_RUNTIME_INSTALLED) $(LF_RUNTIME_BUILD)))
+LF_RUNTIME_LIB ?= $(if $(LF_RUNTIME_FOUND),$(LF_RUNTIME_FOUND),$(LF_RUNTIME_INSTALLED))
+
+ifeq ($(strip $(OPENBLAS_DIR)),)
+  OPENBLAS_CPPFLAGS :=
+  OPENBLAS_LIBS := -lopenblas
+else
+  OPENBLAS_CPPFLAGS := -I$(OPENBLAS_DIR)/include
+  OPENBLAS_LIBS := -L$(OPENBLAS_DIR)/lib -lopenblas
+endif
+
+ifeq ($(strip $(LIBOMP_DIR)),)
+  OMP_LIBS := -lomp
+else
+  OMP_LIBS := -L$(LIBOMP_DIR)/lib -lomp
+endif
+
+GFORTRAN_LIBS := -L$(dir $(GFORTRAN_RUNTIME)) -lgfortran -lquadmath
+
+LF_CPPFLAGS := --cpp --no-style-suggestions --legacy-array-sections \
+               --no-array-bounds-checking \
+               -D BIESOLVER_R64_ONLY -D BIESOLVER_STELLARATOR_BUILD
+LF_MODFLAGS := -J $(MOD_DIR) -I $(MOD_DIR)
+LF_IRFLAGS  := $(LF_CPPFLAGS) $(LF_MODFLAGS) --separate-compilation --show-llvm
+LF_IR_FIX   := $(ROOT)/scripts/fix-lfortran-llvm.pl
+
+# LFortran 0.64 emits otherwise valid LLVM IR with integer constants carrying
+# a second, conflicting type annotation in 64-bit array-index expressions.
+# Pipe its IR through the narrow fixup below; clang remains the verifier.
+define LF_COMPILE
+	$(LF) $(LF_CPPFLAGS) $(LF_MODFLAGS) -c $(1) -o $(BLD_DIR)/$(3).symtab.o
+	$(LF) $(LF_IRFLAGS) $(1) 2> $(IR_DIR)/$(3).log | \
+	  $(PERL) $(LF_IR_FIX) > $(IR_DIR)/$(3).ll
+	$(CLANG) -c $(IR_DIR)/$(3).ll -o $(2)
+endef
+
+define LF_COMPILE_PROGRAM
+	$(LF) $(LF_IRFLAGS) $(1) 2> $(IR_DIR)/$(3).log | \
+	  $(PERL) $(LF_IR_FIX) > $(IR_DIR)/$(3).ll
+	$(CLANG) -c $(IR_DIR)/$(3).ll -o $(2)
+endef
+
+QA_PRIMITIVES_SRC := $(QA_DIR)/src/quatapproximation_mod.f90
+QA_PRIMITIVES_MOD := $(MOD_DIR)/quatapproximation_mod.mod
+QA_PRIMITIVES_OBJ := $(BLD_DIR)/quatapproximation_mod.o
+QA_OTHER_MODULES  := harmonic_mod koorn_geom_mod qkernel_mod omega_mod tensor_geom_mod
+QA_OTHER_MODS     := $(addprefix $(MOD_DIR)/,$(addsuffix .mod,$(QA_OTHER_MODULES)))
+QA_OTHER_OBJS     := $(addprefix $(BLD_DIR)/,$(addsuffix .o,$(QA_OTHER_MODULES)))
+LQ_PRIMITIVES_SRC := $(LQ_DIR)/src/linequaaadrature_mod.f90
+LQ_PRIMITIVES_MOD := $(MOD_DIR)/linequaaadrature_mod.mod
+LQ_PRIMITIVES_OBJ := $(BLD_DIR)/linequaaadrature_mod.o
+LQ_ADAPTIVE_SRC   := $(LQ_DIR)/src/adaptive_mod.f90
+LQ_ADAPTIVE_MOD   := $(MOD_DIR)/lq_adaptive_mod.mod
+LQ_ADAPTIVE_OBJ   := $(BLD_DIR)/adaptive_mod.o
+LQ_KERNEL_SRC     := $(LQ_DIR)/src/kernel_mod.f90
+LQ_KERNEL_MOD     := $(MOD_DIR)/lq_kernel_mod.mod
+LQ_KERNEL_OBJ     := $(BLD_DIR)/kernel_mod.o
+LQ_SOLIDANGLE_SRC := $(LQ_DIR)/src/solidangle_mod.f90
+LQ_SOLIDANGLE_MOD := $(MOD_DIR)/solidangle_mod.mod
+LQ_SOLIDANGLE_OBJ := $(BLD_DIR)/solidangle_mod.o
+LQ_LAP3D_SRC      := $(LQ_DIR)/src/lap3d_mod.f90
+LQ_LAP3D_MOD      := $(MOD_DIR)/lap3d_mod.mod
+LQ_LAP3D_OBJ      := $(BLD_DIR)/lap3d_mod.o
+LQ_SIMD_SRC       := $(LQ_DIR)/src/lap3d_simd_mod.f90
+LQ_SIMD_MOD       := $(MOD_DIR)/lap3d_simd_mod.mod
+LQ_SIMD_OBJ       := $(BLD_DIR)/lap3d_simd_mod.o
+LQ_OTHER_MODS     := $(LQ_ADAPTIVE_MOD) $(LQ_KERNEL_MOD) $(LQ_SOLIDANGLE_MOD) \
+                     $(LQ_LAP3D_MOD) $(LQ_SIMD_MOD)
+LQ_OTHER_OBJS     := $(LQ_ADAPTIVE_OBJ) $(LQ_KERNEL_OBJ) $(LQ_SOLIDANGLE_OBJ) \
+                     $(LQ_LAP3D_OBJ) $(LQ_SIMD_OBJ)
+QOT_PATCH_SRC     := $(ROOT)/src/patch_refine_mod.f90
+QOT_PATCH_MOD     := $(MOD_DIR)/patch_refine_mod.mod
+QOT_PATCH_OBJ     := $(BLD_DIR)/patch_refine_mod.o
+QOT_CLOSE_SRC     := $(ROOT)/src/lap3d_close_mod.f90
+QOT_CLOSE_MOD     := $(MOD_DIR)/lap3d_close_mod.mod
+QOT_CLOSE_OBJ     := $(BLD_DIR)/lap3d_close_mod.o
+W7X_SRC           := $(ROOT)/web/stellarator/fortran/w7x_modes_mod.f90
+W7X_MOD           := $(MOD_DIR)/w7x_modes_mod.mod
+W7X_OBJ           := $(BLD_DIR)/w7x_modes_mod.o
+SGRF_CORE_SRC     := $(ROOT)/web/stellarator/fortran/stellarator_grf_core_mod.f90
+SGRF_CORE_MOD     := $(MOD_DIR)/stellarator_grf_core_mod.mod
+SGRF_CORE_OBJ     := $(BLD_DIR)/stellarator_grf_core_mod.o
+SGRF_SRC          := $(ROOT)/test/stellarator_grf.f90
+SGRF_OBJ          := $(BLD_DIR)/stellarator_grf.o
+SGRF_BIN          := $(BLD_DIR)/stellarator_grf
+STELLARATOR_C_SRC := $(ROOT)/utils/stellarator_geo_mex.c
+STELLARATOR_C_OBJ := $(BLD_DIR)/stellarator_geo.o
+SIMD_C_SRC        := $(LQ_DIR)/src/lap3d_simd.c
+SIMD_C_OBJ        := $(BLD_DIR)/lap3d_simd.o
+BLAS_SHIM_SRC     := $(ROOT)/utils/lfortran_blas_shim.c
+BLAS_SHIM_OBJ     := $(BLD_DIR)/lfortran_blas_shim.o
+
+FORTRAN_OBJS := $(QA_PRIMITIVES_OBJ) $(QA_OTHER_OBJS) \
+                $(LQ_PRIMITIVES_OBJ) $(LQ_OTHER_OBJS) \
+                $(QOT_PATCH_OBJ) $(QOT_CLOSE_OBJ) $(W7X_OBJ) $(SGRF_CORE_OBJ) $(SGRF_OBJ)
+C_OBJS       := $(STELLARATOR_C_OBJ) $(SIMD_C_OBJ) $(BLAS_SHIM_OBJ)
+
+.PHONY: help probe qa-primitives qa-modules lq-primitives lq-modules \
+        qot-modules stellarator-object stellarator run clean
+
+help:
+	@echo "LFortran stellarator build"
+	@echo ""
+	@echo "  make -f Makefile.lfortran probe"
+	@echo "  make -f Makefile.lfortran qa-primitives"
+	@echo "  make -f Makefile.lfortran qa-modules"
+	@echo "  make -f Makefile.lfortran lq-primitives"
+	@echo "  make -f Makefile.lfortran lq-modules"
+	@echo "  make -f Makefile.lfortran qot-modules"
+	@echo "  make -f Makefile.lfortran stellarator-object"
+	@echo "  make -f Makefile.lfortran stellarator"
+	@echo "  make -f Makefile.lfortran run"
+	@echo "  make -f Makefile.lfortran clean"
+	@echo ""
+	@echo "Override the compiler with LF=/path/to/lfortran."
+
+probe:
+	$(LF) --version
+
+qa-primitives: $(QA_PRIMITIVES_MOD) $(QA_PRIMITIVES_OBJ)
+
+qa-modules: qa-primitives $(QA_OTHER_MODS) $(QA_OTHER_OBJS)
+
+lq-primitives: $(LQ_PRIMITIVES_MOD) $(LQ_PRIMITIVES_OBJ)
+
+lq-modules: qa-modules lq-primitives $(LQ_OTHER_MODS) $(LQ_OTHER_OBJS)
+
+qot-modules: lq-modules $(QOT_PATCH_MOD) $(QOT_PATCH_OBJ) \
+             $(QOT_CLOSE_MOD) $(QOT_CLOSE_OBJ)
+
+stellarator-object: qot-modules $(W7X_MOD) $(W7X_OBJ) $(SGRF_CORE_MOD) $(SGRF_CORE_OBJ) $(SGRF_OBJ)
+
+stellarator: $(SGRF_BIN)
+
+run: $(SGRF_BIN)
+	OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} OPENBLAS_NUM_THREADS=1 \
+	  $(SGRF_BIN) $${NCASE:-1} $${ISIMD:-0} $${NTHREAD:-1} $${PRADAPTIVE:-0}
+
+$(SGRF_BIN): $(FORTRAN_OBJS) $(C_OBJS) $(FMM3D_LIB) $(LF_RUNTIME_LIB)
+	$(CLANG) $(FORTRAN_OBJS) $(C_OBJS) $(FMM3D_LIB) $(LF_RUNTIME_LIB) \
+	  $(OPENBLAS_LIBS) $(OMP_LIBS) $(GFORTRAN_LIBS) -lm -o $@
+
+$(QA_PRIMITIVES_MOD): $(QA_PRIMITIVES_SRC) | $(BLD_DIR) $(MOD_DIR) $(IR_DIR)
+	$(call LF_COMPILE,$<,$(QA_PRIMITIVES_OBJ),quatapproximation_mod)
+	test -f $@
+
+$(QA_PRIMITIVES_OBJ): $(QA_PRIMITIVES_MOD)
+	test -f $@
+
+$(MOD_DIR)/%.mod: $(QA_DIR)/src/%.f90 | $(BLD_DIR) $(MOD_DIR) $(IR_DIR)
+	$(call LF_COMPILE,$<,$(BLD_DIR)/$*.o,$*)
+	test -f $@
+
+$(BLD_DIR)/%.o: $(MOD_DIR)/%.mod
+	test -f $@
+
+$(LQ_PRIMITIVES_MOD): $(LQ_PRIMITIVES_SRC) | $(BLD_DIR) $(MOD_DIR) $(IR_DIR)
+	$(call LF_COMPILE,$<,$(LQ_PRIMITIVES_OBJ),linequaaadrature_mod)
+	test -f $@
+
+$(LQ_PRIMITIVES_OBJ): $(LQ_PRIMITIVES_MOD)
+	test -f $@
+
+$(LQ_ADAPTIVE_MOD): $(LQ_ADAPTIVE_SRC) $(LQ_PRIMITIVES_MOD) | $(BLD_DIR) $(MOD_DIR)
+	$(call LF_COMPILE,$<,$(LQ_ADAPTIVE_OBJ),adaptive_mod)
+	test -f $@
+
+$(LQ_ADAPTIVE_OBJ): $(LQ_ADAPTIVE_MOD)
+	test -f $@
+
+$(LQ_KERNEL_MOD): $(LQ_KERNEL_SRC) $(LQ_PRIMITIVES_MOD) $(LQ_ADAPTIVE_MOD) | $(BLD_DIR) $(MOD_DIR)
+	$(call LF_COMPILE,$<,$(LQ_KERNEL_OBJ),kernel_mod)
+	test -f $@
+
+$(LQ_KERNEL_OBJ): $(LQ_KERNEL_MOD)
+	test -f $@
+
+$(LQ_SOLIDANGLE_MOD): $(LQ_SOLIDANGLE_SRC) $(LQ_PRIMITIVES_MOD) \
+	                  $(MOD_DIR)/koorn_geom_mod.mod $(LQ_ADAPTIVE_MOD) $(LQ_KERNEL_MOD) | $(BLD_DIR) $(MOD_DIR)
+	$(call LF_COMPILE,$<,$(LQ_SOLIDANGLE_OBJ),solidangle_mod)
+	test -f $@
+
+$(LQ_SOLIDANGLE_OBJ): $(LQ_SOLIDANGLE_MOD)
+	test -f $@
+
+$(LQ_LAP3D_MOD): $(LQ_LAP3D_SRC) $(LQ_PRIMITIVES_MOD) | $(BLD_DIR) $(MOD_DIR)
+	$(call LF_COMPILE,$<,$(LQ_LAP3D_OBJ),lap3d_mod)
+	test -f $@
+
+$(LQ_LAP3D_OBJ): $(LQ_LAP3D_MOD)
+	test -f $@
+
+$(LQ_SIMD_MOD): $(LQ_SIMD_SRC) $(LQ_PRIMITIVES_MOD) | $(BLD_DIR) $(MOD_DIR)
+	$(call LF_COMPILE,$<,$(LQ_SIMD_OBJ),lap3d_simd_mod)
+	test -f $@
+
+$(LQ_SIMD_OBJ): $(LQ_SIMD_MOD)
+	test -f $@
+
+$(QOT_PATCH_MOD): $(QOT_PATCH_SRC) $(MOD_DIR)/quatapproximation_mod.mod \
+	                  $(MOD_DIR)/koorn_geom_mod.mod $(LQ_LAP3D_MOD) $(LQ_SIMD_MOD) | $(BLD_DIR) $(MOD_DIR)
+	$(call LF_COMPILE,$<,$(QOT_PATCH_OBJ),patch_refine_mod)
+	test -f $@
+
+$(QOT_PATCH_OBJ): $(QOT_PATCH_MOD)
+	test -f $@
+
+$(QOT_CLOSE_MOD): $(QOT_CLOSE_SRC) $(QA_OTHER_MODS) $(LQ_OTHER_MODS) \
+	                  $(QOT_PATCH_MOD) | $(BLD_DIR) $(MOD_DIR)
+	$(call LF_COMPILE,$<,$(QOT_CLOSE_OBJ),lap3d_close_mod)
+	test -f $@
+
+$(QOT_CLOSE_OBJ): $(QOT_CLOSE_MOD)
+	test -f $@
+
+$(W7X_MOD): $(W7X_SRC) $(QA_PRIMITIVES_MOD) | $(BLD_DIR) $(MOD_DIR) $(IR_DIR)
+	$(call LF_COMPILE,$<,$(W7X_OBJ),w7x_modes_mod)
+	test -f $@
+
+$(W7X_OBJ): $(W7X_MOD)
+	test -f $@
+
+$(SGRF_CORE_MOD): $(SGRF_CORE_SRC) $(QOT_CLOSE_MOD) $(QOT_PATCH_MOD) $(W7X_MOD) | $(BLD_DIR) $(MOD_DIR) $(IR_DIR)
+	$(call LF_COMPILE,$<,$(SGRF_CORE_OBJ),stellarator_grf_core_mod)
+	test -f $@
+
+$(SGRF_CORE_OBJ): $(SGRF_CORE_MOD)
+	test -f $@
+
+$(SGRF_OBJ): $(SGRF_SRC) $(SGRF_CORE_MOD) | $(BLD_DIR) $(IR_DIR)
+	$(call LF_COMPILE_PROGRAM,$<,$@,stellarator_grf)
+
+$(STELLARATOR_C_OBJ): $(STELLARATOR_C_SRC) | $(BLD_DIR)
+	$(CLANG) -O3 -c $< -o $@
+
+$(SIMD_C_OBJ): $(SIMD_C_SRC) | $(BLD_DIR)
+	$(CLANG) -O3 -fPIC -march=native -ffp-contract=off -c $< -o $@
+
+$(BLAS_SHIM_OBJ): $(BLAS_SHIM_SRC) | $(BLD_DIR)
+	$(CLANG) -O2 $(OPENBLAS_CPPFLAGS) -c $< -o $@
+
+$(MOD_DIR)/qkernel_mod.mod: $(MOD_DIR)/quatapproximation_mod.mod
+$(MOD_DIR)/omega_mod.mod: $(MOD_DIR)/quatapproximation_mod.mod $(MOD_DIR)/harmonic_mod.mod
+$(MOD_DIR)/tensor_geom_mod.mod: $(MOD_DIR)/quatapproximation_mod.mod
+
+$(BLD_DIR) $(MOD_DIR) $(IR_DIR):
+	mkdir -p $@
+
+clean:
+	rm -rf $(BLD_DIR)

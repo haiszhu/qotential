@@ -6,8 +6,11 @@
 *.asv
 fort.*
 *.txt
+!web/stellarator/fortran/wasm_sources.txt
+!web/stellarator/public/THIRD_PARTY_NOTICES.txt
 *.mod
 *.a
 int2*
 make.inc
 build/
+build-lfortran/

@@ -1,0 +1,19 @@
+# Ordered scalar solver closure. Paths are relative to the qotential root;
+# build scripts generate one C object per source in this order.
+external/QuatApproximation/src/quatapproximation_mod.f90
+external/QuatApproximation/src/harmonic_mod.f90
+external/QuatApproximation/src/koorn_geom_mod.f90
+external/QuatApproximation/src/qkernel_mod.f90
+external/QuatApproximation/src/omega_mod.f90
+external/QuatApproximation/src/tensor_geom_mod.f90
+external/LineQuaaadrature/src/linequaaadrature_mod.f90
+external/LineQuaaadrature/src/adaptive_mod.f90
+external/LineQuaaadrature/src/kernel_mod.f90
+external/LineQuaaadrature/src/solidangle_mod.f90
+external/LineQuaaadrature/src/lap3d_mod.f90
+src/patch_refine_mod.f90
+src/lap3d_close_mod.f90
+web/stellarator/fortran/w7x_modes_mod.f90
+web/stellarator/fortran/stellarator_progress_mod.f90
+web/stellarator/fortran/stellarator_grf_core_mod.f90
+web/stellarator/fortran/stellarator_wasm_api.f90

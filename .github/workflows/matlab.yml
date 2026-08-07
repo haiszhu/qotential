@@ -1,7 +1,8 @@
 # set up MATLAB on Github-Hosted Runner
 
 name: Run MATLAB Build on GitHub-Hosted Runner
-on: [push]
+on:
+  workflow_dispatch:
 jobs:
   my-job:
     name: Run MATLAB Build

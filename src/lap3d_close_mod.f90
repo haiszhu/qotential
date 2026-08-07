@@ -1,70 +1,152 @@
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
+#define cpu_time biesolver_scalar_noop_cpu_time
+#endif
 module lap3d_close_mod
 
-  use quatapproximation_mod, only: r64, r128, gauss_r64, gauss_r128
+  use quatapproximation_mod, only: r64, r128, gauss_r64
+#ifdef BIESOLVER_STELLARATOR_BUILD
+  use iso_c_binding, only: c_char
+#endif
+#ifndef BIESOLVER_R64_ONLY
+  use quatapproximation_mod, only: gauss_r128
+#endif
   use harmonic_mod, only: evaltensorproductharmonicgrad_r64
-  use tensor_geom_mod, only: line3quadr_3dline_T, line3quadr_3dline_T_r128
-  use qkernel_mod, only: qak_qnm_i_r64, qak_qnm_i_r128,  &
-                          QAK_LPTYPE_D
-  use omega_mod, only: qao_omeganm_i_r64, qao_omeganm_i_r128,         &
-                       qao_omegaall_r64, qao_omegaall_r128
+  use tensor_geom_mod, only: line3quadr_3dline_T
+#ifndef BIESOLVER_R64_ONLY
+  use tensor_geom_mod, only: line3quadr_3dline_T_r128
+#endif
+  use qkernel_mod, only: qak_qnm_i_r64, QAK_LPTYPE_D
+#ifndef BIESOLVER_R64_ONLY
+  use qkernel_mod, only: qak_qnm_i_r128
+#endif
+  use omega_mod, only: qao_omeganm_i_r64, qao_omegaall_r64
+#ifndef BIESOLVER_R64_ONLY
+  use omega_mod, only: qao_omeganm_i_r128, qao_omegaall_r128
+#endif
+#ifndef BIESOLVER_R64_ONLY
   use koorn_geom_mod, only: lu_solve_r128
+#endif
   use solidangle_mod, only: eval_moments_funvals_r64
 
   implicit none
   private
   public :: Lap3dDLP_closepanel_r64
+#ifndef BIESOLVER_R64_ONLY
   public :: Lap3dDLP_closepanel_r128
+#endif
   public :: build_tc_chialpha_r64
   public :: build_closepanel_precomp_r64
   public :: rrq_r64
 
   integer(8), parameter :: SBDNP = 8_8
 
-  type :: close_ref_t
-    integer(8) :: nquad = -1_8, korder = -1_8, kpols = -1_8
-    real(r64), allocatable :: tgl(:), wgl(:), Dgl(:,:), w_bclag(:), Legmat(:,:)
-    real(r64), allocatable :: umatr(:,:), vmatr(:,:)
-  end type close_ref_t
+#ifndef BIESOLVER_WASM_SCALAR_ONLY
+  integer(8), save :: CREF_nquad = -1_8, CREF_korder = -1_8
+  integer(8), save :: CREF_kpols = -1_8
+  logical, save :: CREF_set = .false.
+  real(r64), allocatable, save :: CREF_tgl(:), CREF_wgl(:), CREF_Dgl(:,:)
+  real(r64), allocatable, save :: CREF_w_bclag(:), CREF_Legmat(:,:)
+  real(r64), allocatable, save :: CREF_umatr(:,:), CREF_vmatr(:,:)
+#endif
 
-  type(close_ref_t), save :: CREF
+  interface
+#ifdef BIESOLVER_STELLARATOR_BUILD
+    subroutine zgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, &
+                     beta, c, ldc) bind(C, name="biesolver_zgemm")
+      import r64, c_char
+      character(kind=c_char), value :: transa, transb
+      integer(8), intent(in) :: m, n, k, lda, ldb, ldc
+      complex(r64), intent(in) :: alpha, beta
+      complex(r64), intent(in) :: a(lda,*), b(ldb,*)
+      complex(r64), intent(inout) :: c(ldc,*)
+    end subroutine zgemm
+
+    subroutine dgesv(n, nrhs, a, lda, ipiv, b, ldb, info) &
+        bind(C, name="biesolver_dgesv")
+      import r64
+      integer(8), intent(in) :: n, nrhs, lda, ldb
+      real(r64), intent(inout) :: a(lda,*), b(ldb,*)
+      integer(8), intent(out) :: ipiv(*)
+      integer(8), intent(out) :: info
+    end subroutine dgesv
+#else
+    subroutine zgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, &
+                     beta, c, ldc)
+      import r64
+      character(len=1), intent(in) :: transa, transb
+      integer(8), intent(in) :: m, n, k, lda, ldb, ldc
+      complex(r64), intent(in) :: alpha, beta
+      complex(r64), intent(in) :: a(lda,*), b(ldb,*)
+      complex(r64), intent(inout) :: c(ldc,*)
+    end subroutine zgemm
+
+    subroutine dgesv(n, nrhs, a, lda, ipiv, b, ldb, info)
+      import r64
+      integer(8), intent(in) :: n, nrhs, lda, ldb
+      real(r64), intent(inout) :: a(lda,*), b(ldb,*)
+      integer(8), intent(out) :: ipiv(*)
+      integer(8), intent(out) :: info
+    end subroutine dgesv
+#endif
+  end interface
 
 contains
 
-  subroutine close_ref_ensure_r64(nquad, korder, kpols)
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
+  subroutine biesolver_scalar_noop_cpu_time(value)
+    real(r64), intent(out) :: value
+    value = 0.0_r64
+  end subroutine biesolver_scalar_noop_cpu_time
+#endif
+
+  subroutine close_ref_build_r64(nquad, korder, kpols, tgl, wgl, Dgl, &
+                                 w_bclag, Legmat, umatr, vmatr)
     use koorn_geom_mod,        only: koorn_vals2coefs_coefs2vals
     use quatapproximation_mod, only: gauss_r64, bclaginterpweights_r64
     use linequaaadrature_mod,  only: legeexps_r64
     integer(8), intent(in) :: nquad, korder, kpols
+    real(r64), intent(out) :: tgl(nquad), wgl(nquad)
+    real(r64), intent(out) :: Dgl(nquad,nquad), w_bclag(nquad)
+    real(r64), intent(out) :: Legmat(nquad,nquad)
+    real(r64), intent(out) :: umatr(kpols,kpols), vmatr(kpols,kpols)
+    real(r64) :: vtmp(nquad,nquad)
 
-    real(r64), allocatable :: vtmp(:,:)
+    call gauss_r64(nquad, tgl, wgl, Dgl)
+    call bclaginterpweights_r64(nquad, tgl, w_bclag)
+    call legeexps_r64(2_8, nquad, tgl, Legmat, vtmp, wgl)
 
-    if (CREF%nquad == nquad .and. CREF%korder == korder .and. &
-        CREF%kpols == kpols) return
+    umatr = 0.0_r64;  vmatr = 0.0_r64
+    call koorn_vals2coefs_coefs2vals(korder, kpols, umatr, vmatr)
+  end subroutine close_ref_build_r64
 
-    if (.not. (CREF%nquad == nquad .and. CREF%korder == korder .and. &
-               CREF%kpols == kpols)) then
+#ifndef BIESOLVER_WASM_SCALAR_ONLY
+  subroutine close_ref_ensure_r64(nquad, korder, kpols)
+    integer(8), intent(in) :: nquad, korder, kpols
 
-    if (allocated(CREF%tgl)) deallocate(CREF%tgl, CREF%wgl, CREF%Dgl, &
-                                        CREF%w_bclag, CREF%Legmat, &
-                                        CREF%umatr, CREF%vmatr)
-    allocate(CREF%tgl(nquad), CREF%wgl(nquad), CREF%Dgl(nquad,nquad))
-    allocate(CREF%w_bclag(nquad), CREF%Legmat(nquad,nquad))
-    allocate(CREF%umatr(kpols,kpols), CREF%vmatr(kpols,kpols))
-    allocate(vtmp(nquad,nquad))
+    if (CREF_set .and. CREF_nquad == nquad .and. &
+        CREF_korder == korder .and. CREF_kpols == kpols) return
 
-    call gauss_r64(nquad, CREF%tgl, CREF%wgl, CREF%Dgl)
-    call bclaginterpweights_r64(nquad, CREF%tgl, CREF%w_bclag)
-    call legeexps_r64(2_8, nquad, CREF%tgl, CREF%Legmat, vtmp, CREF%wgl)
+    !$omp critical (close_ref_build)
+    if (.not. (CREF_set .and. CREF_nquad == nquad .and. &
+               CREF_korder == korder .and. CREF_kpols == kpols)) then
 
-    CREF%umatr = 0.0_r64;  CREF%vmatr = 0.0_r64
-    call koorn_vals2coefs_coefs2vals(korder, kpols, CREF%umatr, CREF%vmatr)
-
-    deallocate(vtmp)
-    CREF%nquad = nquad;  CREF%korder = korder;  CREF%kpols = kpols
+    if (CREF_set) deallocate(CREF_tgl, CREF_wgl, CREF_Dgl, &
+                             CREF_w_bclag, CREF_Legmat, &
+                             CREF_umatr, CREF_vmatr)
+    allocate(CREF_tgl(nquad), CREF_wgl(nquad), CREF_Dgl(nquad,nquad))
+    allocate(CREF_w_bclag(nquad), CREF_Legmat(nquad,nquad))
+    allocate(CREF_umatr(kpols,kpols), CREF_vmatr(kpols,kpols))
+    call close_ref_build_r64(nquad, korder, kpols, CREF_tgl, CREF_wgl, &
+                             CREF_Dgl, CREF_w_bclag, CREF_Legmat, &
+                             CREF_umatr, CREF_vmatr)
+    CREF_nquad = nquad;  CREF_korder = korder;  CREF_kpols = kpols
+    CREF_set = .true.
 
     end if
+    !$omp end critical (close_ref_build)
 
   end subroutine close_ref_ensure_r64
+#endif
 
   subroutine Lap3dDLP_closepanel_r64(m_tgt, t_x, npat, s_x, order, ref, &
                                      if_adapt, Ac)
@@ -207,6 +289,7 @@ contains
 
   end subroutine Lap3dDLP_closepanel_r64
 
+#ifndef BIESOLVER_R64_ONLY
   subroutine Lap3dDLP_closepanel_r128(m_tgt, t_x, npat, s_x, order, ref, &
                                       if_adapt, Ac)
     integer(8), intent(in)  :: m_tgt, npat, order, ref
@@ -227,6 +310,7 @@ contains
     write(*,*) '  Once those land, mirror Lap3dDLP_closepanel_r64 with kind(r128).'
     error stop
   end subroutine Lap3dDLP_closepanel_r128
+#endif
 
   subroutine lu_solve_local_r64(n, A, k, B)
     integer(8), intent(in)    :: n, k
@@ -295,7 +379,7 @@ contains
     complex(r64) :: Bz(nbd,m)
     real(r64) :: c0(m), c1(m), c2(m), c3(m)
     complex(r64) :: Fx1(2), Fy1(2), Fz1(2)
-    integer(8) :: j
+    integer(8) :: i, j, ell, iq
 
     dxdt = stangbd(1,:)*sspbd
     dydt = stangbd(2,:)*sspbd
@@ -309,9 +393,16 @@ contains
     xx = rx*rx;  yy = ry*ry;  zz = rz*rz
     xy = rx*ry;  xz = rx*rz;  yz = ry*rz
 
-    rr      = 1.0_r64/sqrt(xx + yy + zz)
-    rinvw1  = rr*reshape(w1, [nbd,m])
-    r3invw3 = rr*rr*rr*reshape(w3, [nbd,m])
+    rr = 1.0_r64/sqrt(xx + yy + zz)
+    do j = 1, m
+      do ell = 1, sbdnp
+        do iq = 1, nquad
+          i = (ell-1_8)*nquad + iq
+          rinvw1(i,j)  = rr(i,j)*w1(iq,ell,j)
+          r3invw3(i,j) = rr(i,j)*rr(i,j)*rr(i,j)*w3(iq,ell,j)
+        end do
+      end do
+    end do
 
     do j = 1, m
       ax(:,j)  = dxdt*rinvw1(:,j)
@@ -412,9 +503,15 @@ contains
 
     korder = nterms - 1_8
     kpols  = nterms*(nterms+1_8)/2_8
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
+    call close_ref_build_r64(nquad, korder, kpols, tgl, wgl, Dgl, &
+                             w_bclag, Legmat, umatr, vmatr)
+#else
     call close_ref_ensure_r64(nquad, korder, kpols)
-    tgl = CREF%tgl;  wgl = CREF%wgl;  Dgl = CREF%Dgl
-    w_bclag = CREF%w_bclag;  Legmat = CREF%Legmat
+    tgl = CREF_tgl;  wgl = CREF_wgl;  Dgl = CREF_Dgl
+    w_bclag = CREF_w_bclag;  Legmat = CREF_Legmat
+    umatr = CREF_umatr;  vmatr = CREF_vmatr
+#endif
 
     call circumcircle_transform_3d(r_vert, R, c0, alpha_circ)
     do i = 1, n
@@ -432,7 +529,7 @@ contains
     end do
     sxbd = 0.0_r64;  swbd = 0.0_r64;  stangbd = 0.0_r64;  sspbd = 0.0_r64
     r_vert_local = 0.0_r64
-    call line3quadr_3dline(sxt, korder, kpols, CREF%umatr, nquad, tgl, wgl, Dgl, &
+    call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
                            sbdnp, tpan, nbd, sxbd, swbd, stangbd, sspbd, &
                            r_vert_local)
 
@@ -532,6 +629,7 @@ contains
                      ichart, sxbd_chart, rv_chart, &
                      As, Ad, Omega, IalphaAsvestas, timeinfo)
     use patch_refine_mod, only: patch_levels_t, build_patch_levels_r64, &
+                                clear_patch_levels_r64, &
                                 lap3dsdlpmat_levels_r64
     use koorn_geom_mod,   only: koorn_vals2coefs_coefs2vals, line3quadr_3dline
     use lq_kernel_mod,    only: build_ssq_weights_r64
@@ -573,6 +671,8 @@ contains
     complex(r64) :: Fybd(3*nquad,(order+1)**2), Fzbd(3*nquad,(order+1)**2)
     real(r64) :: Mmatrix(4*(order*(order+1)/2),4*(order*(order+1)/2))
     real(r64) :: sxt(3,n), dl(nquad), dr(nquad)
+    real(r64) :: umatr(order*(order+1)/2,order*(order+1)/2)
+    real(r64) :: vmatr(order*(order+1)/2,order*(order+1)/2)
     integer(8) :: idxs(m)
 
     pi     = 4.0_r64*atan(1.0_r64)
@@ -599,8 +699,15 @@ contains
 
     call cpu_time(t0)
 
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
+    call close_ref_build_r64(nquad, korder, kpols, tgl, wgl, Dgl, &
+                             w_bclag, Legmat, umatr, vmatr)
+#else
     call close_ref_ensure_r64(nquad, korder, kpols)
-    tgl = CREF%tgl;  wgl = CREF%wgl;  Dgl = CREF%Dgl
+    tgl = CREF_tgl;  wgl = CREF_wgl;  Dgl = CREF_Dgl
+    w_bclag = CREF_w_bclag;  Legmat = CREF_Legmat
+    umatr = CREF_umatr;  vmatr = CREF_vmatr
+#endif
     block
       real(r64) :: tp(sbdnp+1), bw(3*nquad)
       real(r64) :: bt(3,3*nquad), bs(3*nquad)
@@ -609,7 +716,7 @@ contains
       end do
       sxbd_raw = 0.0_r64; bw = 0.0_r64; bt = 0.0_r64; bs = 0.0_r64
       r_vert = 0.0_r64
-      call line3quadr_3dline(sx, korder, kpols, CREF%umatr, nquad, tgl, wgl, Dgl, &
+      call line3quadr_3dline(sx, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
                              sbdnp, tp, nbd, sxbd_raw, bw, bt, bs, r_vert)
     end block
     if (ichart == 1_8) sxbd_raw = sxbd_chart
@@ -633,7 +740,7 @@ contains
       end do
       sxbd1 = 0.0_r64; swbd1 = 0.0_r64; stangbd1 = 0.0_r64; ss = 0.0_r64
       rv = 0.0_r64
-      call line3quadr_3dline(sxt, korder, kpols, CREF%umatr, nquad, tgl, wgl, Dgl, &
+      call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
                              3_8*LEN1, tp, nb1, sxbd1, swbd1, stangbd1, ss, rv)
     end block
     block
@@ -643,7 +750,7 @@ contains
       end do
       sxbd2 = 0.0_r64; swbd2 = 0.0_r64; stangbd2 = 0.0_r64; ss = 0.0_r64
       rv = 0.0_r64
-      call line3quadr_3dline(sxt, korder, kpols, CREF%umatr, nquad, tgl, wgl, Dgl, &
+      call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
                              3_8*LEN2, tp, nb2, sxbd2, swbd2, stangbd2, ss, rv)
     end block
     block
@@ -653,7 +760,7 @@ contains
       end do
       sxbd3 = 0.0_r64; swbd3 = 0.0_r64; stangbd3 = 0.0_r64; ss = 0.0_r64
       rv = 0.0_r64
-      call line3quadr_3dline(sxt, korder, kpols, CREF%umatr, nquad, tgl, wgl, Dgl, &
+      call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
                              3_8*LEN3, tp, nb3, sxbd3, swbd3, stangbd3, ss, rv)
     end block
 
@@ -673,8 +780,8 @@ contains
         real(r64)    :: txn(3,ms)
         real(r64)    :: w1(nquad,3,ms), w3(nquad,3,ms), w5(nquad,3,ms)
         complex(r64) :: troot(ms,3), xr(ms,3), yr(ms,3), zr(ms,3)
-        real(r64)    :: xrr(ms,3*nquad), yrr(ms,3*nquad), zrr(ms,3*nquad)
-        integer(8)   :: rfc(ms,3*nquad), rfc_ssq(ms), idxnp(ncoeff)
+        real(r64)    :: xrr(ms,3), yrr(ms,3), zrr(ms,3)
+        integer(8)   :: rfc(ms,3), rfc_ssq(ms), idxnp(ncoeff)
         complex(r64) :: Fx(3*nquad,ncoeff), Fy(3*nquad,ncoeff)
         complex(r64) :: Fz(3*nquad,ncoeff)
         complex(r64) :: Ichi(ms,ncoeff,4), Ialpha(ms,ncoeff,4)
@@ -694,14 +801,14 @@ contains
         rfc = 0_8;  rfc_ssq = 0_8
         call build_ssq_weights_r64(ms, txn, RHO_SSQ, nbd, sxbd, sbdnp, nquad, &
                                    tgl, wgl, Legmat, w1, w3, w5, &
-                                   troot, xr, yr, zr, rfc(:,1:sbdnp), rfc_ssq)
+                                   troot, xr, yr, zr, rfc, rfc_ssq)
         call cpu_time(t1c);  timeinfo(4) = timeinfo(4) + (t1c - t0)
 
         call cpu_time(t0)
         xrr = 0.0_r64;  yrr = 0.0_r64;  zrr = 0.0_r64
-        xrr(:,1:sbdnp) = real(xr, r64)
-        yrr(:,1:sbdnp) = real(yr, r64)
-        zrr(:,1:sbdnp) = real(zr, r64)
+        xrr = real(xr, r64)
+        yrr = real(yr, r64)
+        zrr = real(zr, r64)
         Ias = 0.0_r64
         call evaluate_solid_angle_integral_fast_r64(ms, txn, nbd, sbdnp, nquad, &
              sxbd, stangbd, sspbd, &
@@ -769,6 +876,8 @@ contains
         call cpu_time(t1c);  timeinfo(8) = timeinfo(8) + (t1c - t0)
       end block
     end if
+
+    call clear_patch_levels_r64(lv)
 
   end subroutine rrq_r64
 

@@ -1,24 +1,26 @@
 module patch_refine_mod
 
   use quatapproximation_mod, only: r64
+#ifdef BIESOLVER_STELLARATOR_BUILD
+  use iso_c_binding, only: c_char
+#endif
   use koorn_geom_mod, only: koorn_vals2coefs_coefs2vals, koorn_pols_batch_r64, &
                             get_vioreanu_nodes, get_vioreanu_wts
   use lap3d_mod, only: lap3dsdlpmat_r64
+#ifndef BIESOLVER_WASM_SCALAR_ONLY
   use lap3d_simd_mod, only: csimd128lap3dsdlpmat_r64, &
                             csimd256lap3dsdlpmat_r64, &
                             csimd512lap3dsdlpmat_r64
+#endif
 
   implicit none
   private
   public :: patch_level_t, patch_levels_t, build_patch_levels_r64, &
+            clear_patch_levels_r64, &
             lap3dsdlpmat_levels_r64, patch_ref_t, patch_ref_level_t, REF, &
             PR_ADAPTIVE, PR_SQUARE, PR_QGL
 
-  integer(8), parameter :: CC_SUBIDX(39) = [ &
-     1_8,  2_8,  3_8,  4_8,  7_8,  8_8,  9_8, 10_8, 11_8, 13_8, &
-    14_8, 16_8, 17_8, 27_8, 32_8, 33_8, 34_8, 35_8, 37_8, 40_8, &
-    41_8, 42_8, 43_8, 44_8, 46_8, 47_8, 48_8, 49_8, 50_8, 52_8, &
-    53_8, 55_8, 58_8, 59_8, 60_8, 61_8, 62_8, 63_8, 64_8 ]
+  integer(8), parameter :: CC_NSUB = 39_8
 
   real(r64), parameter :: CC_EXTRA_SCALE  = 0.625_r64
   real(r64), parameter :: CC_EXTRA_OFFSET = 0.4375_r64
@@ -69,6 +71,30 @@ module patch_refine_mod
     type(patch_level_t), allocatable :: lev(:)   ! 1=ff, 2=f, 3=c, 4=cc
   end type patch_levels_t
 
+  interface
+#ifdef BIESOLVER_STELLARATOR_BUILD
+    subroutine dgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, &
+                     beta, c, ldc) bind(C, name="biesolver_dgemm")
+      import r64, c_char
+      character(kind=c_char), value :: transa, transb
+      integer(8), intent(in) :: m, n, k, lda, ldb, ldc
+      real(r64), intent(in) :: alpha, beta
+      real(r64), intent(in) :: a(lda,*), b(ldb,*)
+      real(r64), intent(inout) :: c(ldc,*)
+    end subroutine dgemm
+#else
+    subroutine dgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, &
+                     beta, c, ldc)
+      import r64
+      character(len=1), intent(in) :: transa, transb
+      integer(8), intent(in) :: m, n, k, lda, ldb, ldc
+      real(r64), intent(in) :: alpha, beta
+      real(r64), intent(in) :: a(lda,*), b(ldb,*)
+      real(r64), intent(inout) :: c(ldc,*)
+    end subroutine dgemm
+#endif
+  end interface
+
 contains
 
   subroutine build_patch_ref_r64(korder, npols, order, nlevel)
@@ -100,7 +126,7 @@ contains
     call koorn_vals2coefs_coefs2vals(korder, npols, umatr, vmatr)
 
     n1  = order*(order+1_8)/2_8        ! nodes per sub-patch, VR order-1
-    ncc = size(CC_SUBIDX, kind=8) + 4_8
+    ncc = CC_NSUB + 4_8
 
     do ilev = 1, nlevel
 
@@ -120,9 +146,12 @@ contains
           np = REF%lev(ilev-1)%n
           allocate(uvt(2,4*np), wtt(4*np))
           do i = 1, np
-            uv0 = 2.0_r64*REF%lev(ilev-1)%uv(:,i) - 1.0_r64
-            uvt(:,      i) =  uv0
-            uvt(:,   np+i) = -uv0
+            uv0(1) = 2.0_r64*REF%lev(ilev-1)%uv(1,i) - 1.0_r64
+            uv0(2) = 2.0_r64*REF%lev(ilev-1)%uv(2,i) - 1.0_r64
+            uvt(1,      i) =  uv0(1)
+            uvt(2,      i) =  uv0(2)
+            uvt(1,   np+i) = -uv0(1)
+            uvt(2,   np+i) = -uv0(2)
             uvt(1, 2*np+i) =  uv0(1)
             uvt(2, 2*np+i) =  uv0(2) + 2.0_r64
             uvt(1, 3*np+i) =  uv0(1) + 2.0_r64
@@ -131,21 +160,27 @@ contains
               wtt(b*np+i) = 0.25_r64*REF%lev(ilev-1)%wt(i)
             end do
           end do
-          uvt = ((uvt - 1.0_r64)*0.5_r64 + 1.0_r64)*0.5_r64
-          do q = 1, size(CC_SUBIDX, kind=8)
+          do i = 1, 4*np
+            uvt(1,i) = ((uvt(1,i) - 1.0_r64)*0.5_r64 + 1.0_r64)*0.5_r64
+            uvt(2,i) = ((uvt(2,i) - 1.0_r64)*0.5_r64 + 1.0_r64)*0.5_r64
+          end do
+          do q = 1, CC_NSUB
             do i = 1, n1
-              isrc = (CC_SUBIDX(q)-1_8)*n1 + i
+              isrc = (cc_subidx_at(q)-1_8)*n1 + i
               idst = (q-1_8)*n1 + i
-              REF%lev(ilev)%uv(:,idst) = uvt(:,isrc)
+              REF%lev(ilev)%uv(1,idst) = uvt(1,isrc)
+              REF%lev(ilev)%uv(2,idst) = uvt(2,isrc)
               REF%lev(ilev)%wt(idst)   = wtt(isrc)
             end do
           end do
           do q = 1, 4
             do i = 1, n1
               isrc = (q-1_8)*n1 + i
-              idst = (size(CC_SUBIDX, kind=8) + q - 1_8)*n1 + i
-              REF%lev(ilev)%uv(:,idst) = &
-                   (REF%lev(2)%uv(:,isrc) - 0.5_r64)*CC_EXTRA_SCALE + CC_EXTRA_OFFSET
+              idst = (CC_NSUB + q - 1_8)*n1 + i
+              REF%lev(ilev)%uv(1,idst) = &
+                   (REF%lev(2)%uv(1,isrc) - 0.5_r64)*CC_EXTRA_SCALE + CC_EXTRA_OFFSET
+              REF%lev(ilev)%uv(2,idst) = &
+                   (REF%lev(2)%uv(2,isrc) - 0.5_r64)*CC_EXTRA_SCALE + CC_EXTRA_OFFSET
               REF%lev(ilev)%wt(idst)   = CC_EXTRA_SCALE**2 * REF%lev(2)%wt(isrc)
             end do
           end do
@@ -160,9 +195,12 @@ contains
           real(r64)  :: uv0(2)
           integer(8) :: i, b
           do i = 1, nprev
-            uv0 = 2.0_r64*REF%lev(ilev-1)%uv(:,i) - 1.0_r64
-            REF%lev(ilev)%uv(:,         i) =  uv0
-            REF%lev(ilev)%uv(:,  nprev+i) = -uv0
+            uv0(1) = 2.0_r64*REF%lev(ilev-1)%uv(1,i) - 1.0_r64
+            uv0(2) = 2.0_r64*REF%lev(ilev-1)%uv(2,i) - 1.0_r64
+            REF%lev(ilev)%uv(1,         i) =  uv0(1)
+            REF%lev(ilev)%uv(2,         i) =  uv0(2)
+            REF%lev(ilev)%uv(1,  nprev+i) = -uv0(1)
+            REF%lev(ilev)%uv(2,  nprev+i) = -uv0(2)
             REF%lev(ilev)%uv(1,2*nprev+i) =  uv0(1)
             REF%lev(ilev)%uv(2,2*nprev+i) =  uv0(2) + 2.0_r64
             REF%lev(ilev)%uv(1,3*nprev+i) =  uv0(1) + 2.0_r64
@@ -171,7 +209,12 @@ contains
               REF%lev(ilev)%wt(b*nprev+i) = 0.25_r64*REF%lev(ilev-1)%wt(i)
             end do
           end do
-          REF%lev(ilev)%uv = ((REF%lev(ilev)%uv - 1.0_r64)*0.5_r64 + 1.0_r64)*0.5_r64
+          do i = 1, n
+            REF%lev(ilev)%uv(1,i) = &
+              ((REF%lev(ilev)%uv(1,i) - 1.0_r64)*0.5_r64 + 1.0_r64)*0.5_r64
+            REF%lev(ilev)%uv(2,i) = &
+              ((REF%lev(ilev)%uv(2,i) - 1.0_r64)*0.5_r64 + 1.0_r64)*0.5_r64
+          end do
         end block
       end if
 
@@ -218,6 +261,55 @@ contains
 
   end subroutine build_patch_ref_r64
 
+  pure function cc_subidx_at(q) result(index)
+    integer(8), intent(in) :: q
+    integer(8) :: index
+
+    select case (q)
+    case ( 1_8); index =  1_8
+    case ( 2_8); index =  2_8
+    case ( 3_8); index =  3_8
+    case ( 4_8); index =  4_8
+    case ( 5_8); index =  7_8
+    case ( 6_8); index =  8_8
+    case ( 7_8); index =  9_8
+    case ( 8_8); index = 10_8
+    case ( 9_8); index = 11_8
+    case (10_8); index = 13_8
+    case (11_8); index = 14_8
+    case (12_8); index = 16_8
+    case (13_8); index = 17_8
+    case (14_8); index = 27_8
+    case (15_8); index = 32_8
+    case (16_8); index = 33_8
+    case (17_8); index = 34_8
+    case (18_8); index = 35_8
+    case (19_8); index = 37_8
+    case (20_8); index = 40_8
+    case (21_8); index = 41_8
+    case (22_8); index = 42_8
+    case (23_8); index = 43_8
+    case (24_8); index = 44_8
+    case (25_8); index = 46_8
+    case (26_8); index = 47_8
+    case (27_8); index = 48_8
+    case (28_8); index = 49_8
+    case (29_8); index = 50_8
+    case (30_8); index = 52_8
+    case (31_8); index = 53_8
+    case (32_8); index = 55_8
+    case (33_8); index = 58_8
+    case (34_8); index = 59_8
+    case (35_8); index = 60_8
+    case (36_8); index = 61_8
+    case (37_8); index = 62_8
+    case (38_8); index = 63_8
+    case (39_8); index = 64_8
+    case default
+      index = -1_8
+    end select
+  end function cc_subidx_at
+
   subroutine ref_square_regroup(ilev, n1, korder, is_cc, n, nsub)
     use linequaaadrature_mod, only: gauss_r64
     integer(8), intent(in)    :: ilev, n1, korder
@@ -245,8 +337,10 @@ contains
     if (PR_QGL > 0_8) qg = PR_QGL
     fac  = 2.0_r64*sum(REF%lev(1)%wt)
 
-    call move_alloc(REF%lev(ilev)%uv, uv_old)
-    call move_alloc(REF%lev(ilev)%wt, wt_old)
+    allocate(uv_old(2,n), wt_old(n))
+    uv_old = REF%lev(ilev)%uv
+    wt_old = REF%lev(ilev)%wt
+    deallocate(REF%lev(ilev)%uv, REF%lev(ilev)%wt)
 
     allocate(cellcnt(0:ncell-1_8, 0:ncell-1_8), singles(nsub_old))
     cellcnt = 0_8
@@ -366,8 +460,10 @@ contains
         call dgemm('N', 'N', n, 9_8, npols, 1.0_r64, REF%lev(ilev)%interpmat, n, &
                    srcT, npols, 0.0_r64, geo, n)
 
-        lv%lev(ilev)%sx = transpose(geo(:,1:3))
         do i = 1, n
+          lv%lev(ilev)%sx(1,i) = geo(i,1)
+          lv%lev(ilev)%sx(2,i) = geo(i,2)
+          lv%lev(ilev)%sx(3,i) = geo(i,3)
           lv%lev(ilev)%snx(1,i) = geo(i,8)*geo(i,6) - geo(i,9)*geo(i,5)
           lv%lev(ilev)%snx(2,i) = geo(i,9)*geo(i,4) - geo(i,7)*geo(i,6)
           lv%lev(ilev)%snx(3,i) = geo(i,7)*geo(i,5) - geo(i,8)*geo(i,4)
@@ -404,6 +500,18 @@ contains
     end do
 
   end subroutine build_patch_levels_r64
+
+  subroutine clear_patch_levels_r64(lv)
+    type(patch_levels_t), intent(inout) :: lv
+    integer(8) :: ilev
+
+    do ilev = 1, lv%nlevel
+      deallocate(lv%lev(ilev)%sx, lv%lev(ilev)%snx, lv%lev(ilev)%sw)
+      deallocate(lv%lev(ilev)%qpoint, lv%lev(ilev)%qradii2)
+    end do
+    deallocate(lv%lev)
+    lv%nlevel = 0_8
+  end subroutine clear_patch_levels_r64
 
   subroutine lap3dsdlpmat_levels_r64(m, tx, npols, lv, isimd, As, Ad, idxs, ms)
     integer(8),           intent(in)    :: m, npols, isimd
@@ -463,6 +571,7 @@ contains
             txb(:,i) = tx(:,ibat(i))
           end do
 
+#ifndef BIESOLVER_WASM_SCALAR_ONLY
           if (isimd >= 512_8) then
             call csimd512lap3dsdlpmat_r64(nbat, txb, nl, lv%lev(ilev)%sx, &
                                   lv%lev(ilev)%snx, lv%lev(ilev)%sw, Ab, Bb)
@@ -476,6 +585,11 @@ contains
             call lap3dsdlpmat_r64(nbat, txb, nl, lv%lev(ilev)%sx, &
                                   lv%lev(ilev)%snx, lv%lev(ilev)%sw, Ab, Bb)
           end if
+#else
+          if (isimd /= 0_8) error stop 'SIMD unavailable in scalar browser build'
+          call lap3dsdlpmat_r64(nbat, txb, nl, lv%lev(ilev)%sx, &
+                                lv%lev(ilev)%snx, lv%lev(ilev)%sw, Ab, Bb)
+#endif
           call dgemm('N', 'N', nbat, npols, nl, 1.0_r64, Ab, nbat, &
                      REF%lev(ilev)%interpmat, nl, 0.0_r64, Cb, nbat)
           do i = 1, nbat
@@ -568,6 +682,7 @@ contains
         end do
         do i = 1, nc
           il = cl(i);  q = cs(i);  i0 = (q-1_8)*n1
+#ifndef BIESOLVER_WASM_SCALAR_ONLY
           if (isimd >= 128_8) then
             call csimd128lap3dsdlpmat_r64(nb, txb, n1, lv%lev(il)%sx(1,i0+1_8), &
                  lv%lev(il)%snx(1,i0+1_8), lv%lev(il)%sw(i0+1_8), &
@@ -577,6 +692,12 @@ contains
                  lv%lev(il)%snx(1,i0+1_8), lv%lev(il)%sw(i0+1_8), &
                  WS_Ab(1:nb,(i-1_8)*n1+1_8:i*n1), WS_Bb(1:nb,(i-1_8)*n1+1_8:i*n1))
           end if
+#else
+          if (isimd /= 0_8) error stop 'SIMD unavailable in scalar browser build'
+          call lap3dsdlpmat_r64(nb, txb, n1, lv%lev(il)%sx(1,i0+1_8), &
+               lv%lev(il)%snx(1,i0+1_8), lv%lev(il)%sw(i0+1_8), &
+               WS_Ab(1:nb,(i-1_8)*n1+1_8:i*n1), WS_Bb(1:nb,(i-1_8)*n1+1_8:i*n1))
+#endif
         end do
       end block
 
@@ -683,6 +804,7 @@ contains
         do i = 1, nbat
           txb(:,i) = tx(:,ibat(i))
         end do
+#ifndef BIESOLVER_WASM_SCALAR_ONLY
         if (isimd >= 512_8) then
           call csimd512lap3dsdlpmat_r64(nbat, txb, nl, lv%lev(ilev)%sx, &
                                 lv%lev(ilev)%snx, lv%lev(ilev)%sw, Ab, Bb)
@@ -696,6 +818,11 @@ contains
           call lap3dsdlpmat_r64(nbat, txb, nl, lv%lev(ilev)%sx, &
                                 lv%lev(ilev)%snx, lv%lev(ilev)%sw, Ab, Bb)
         end if
+#else
+        if (isimd /= 0_8) error stop 'SIMD unavailable in scalar browser build'
+        call lap3dsdlpmat_r64(nbat, txb, nl, lv%lev(ilev)%sx, &
+                              lv%lev(ilev)%snx, lv%lev(ilev)%sw, Ab, Bb)
+#endif
         call dgemm('N','N', nbat, npols, nl, 1.0_r64, Ab, nbat, &
                    REF%lev(ilev)%interpmat, nl, 0.0_r64, Cb, nbat)
         do i = 1, nbat

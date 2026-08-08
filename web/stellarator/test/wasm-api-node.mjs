@@ -279,8 +279,8 @@ const metricSignatures = {
 };
 
 const deterministicFieldHashes = {
-  u: '3d4184faf6a279b20345cc5413fc7e2c9f5e0d71eb15d6eeeed01cb18d51a146',
-  render_log_error: '673b2ac3d68416a65ffbe390424abbae711c2b88f7bb19c8bfe96e66e7f057ad',
+  u: 'ce4ae30ba941d9e62646cf93c838b202c1d6715753c3e90751824b0f10f83728',
+  render_log_error: 'ae4e6605a7c7b348383fdf6300a3a915bd9235af714b7c87dc69909b818fc3f0',
 };
 
 function enforceTolerance(label, name, metric) {

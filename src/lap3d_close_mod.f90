@@ -51,6 +51,16 @@ module lap3d_close_mod
 
   interface
 #ifdef BIESOLVER_STELLARATOR_BUILD
+    subroutine dgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, &
+                     beta, c, ldc) bind(C, name="biesolver_dgemm")
+      import r64, c_char
+      character(kind=c_char), value :: transa, transb
+      integer(8), intent(in) :: m, n, k, lda, ldb, ldc
+      real(r64), intent(in) :: alpha, beta
+      real(r64), intent(in) :: a(lda,*), b(ldb,*)
+      real(r64), intent(inout) :: c(ldc,*)
+    end subroutine dgemm
+
     subroutine zgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, &
                      beta, c, ldc) bind(C, name="biesolver_zgemm")
       import r64, c_char
@@ -70,6 +80,16 @@ module lap3d_close_mod
       integer(8), intent(out) :: info
     end subroutine dgesv
 #else
+    subroutine dgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, &
+                     beta, c, ldc)
+      import r64
+      character(len=1), intent(in) :: transa, transb
+      integer(8), intent(in) :: m, n, k, lda, ldb, ldc
+      real(r64), intent(in) :: alpha, beta
+      real(r64), intent(in) :: a(lda,*), b(ldb,*)
+      real(r64), intent(inout) :: c(ldc,*)
+    end subroutine dgemm
+
     subroutine zgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, &
                      beta, c, ldc)
       import r64
@@ -365,8 +385,9 @@ contains
     complex(r64), intent(out) :: Ichi(m,ncoeff,4), Ialpha(m,ncoeff,4)
 
     complex(r64), parameter :: ONEC = ( 1.0_r64, 0.0_r64)
-    complex(r64), parameter :: MONEC = (-1.0_r64, 0.0_r64)
     complex(r64), parameter :: IMA  = ( 0.0_r64, 1.0_r64)
+    real(r64),    parameter :: ONE  =  1.0_r64
+    real(r64),    parameter :: MONE = -1.0_r64
 
     real(r64) :: dxdt(nbd), dydt(nbd), dzdt(nbd)
     real(r64) :: rx(nbd,m), ry(nbd,m), rz(nbd,m)
@@ -376,10 +397,12 @@ contains
     real(r64) :: ax(nbd,m), ay(nbd,m), az(nbd,m)
     real(r64) :: bx(nbd,m), by(nbd,m), bz3(nbd,m)
     real(r64) :: g1(nbd,m), g2(nbd,m), g3(nbd,m)
-    complex(r64) :: Bz(nbd,m)
+    real(r64) :: Fxri(nbd,2*ncoeff), Fyri(nbd,2*ncoeff)
+    real(r64) :: Fzri(nbd,2*ncoeff)
+    real(r64) :: Ichi_ri(m,2*ncoeff), Ialpha_ri(m,2*ncoeff,4)
     real(r64) :: c0(m), c1(m), c2(m), c3(m)
     complex(r64) :: Fx1(2), Fy1(2), Fz1(2)
-    integer(8) :: i, j, ell, iq
+    integer(8) :: i, j, k, ell, iq
 
     dxdt = stangbd(1,:)*sspbd
     dydt = stangbd(2,:)*sspbd
@@ -413,38 +436,60 @@ contains
       bz3(:,j) = dzdt*r3invw3(:,j)
     end do
 
+    Fxri(:,1:ncoeff) = real(Fx, r64)
+    Fxri(:,ncoeff+1:2*ncoeff) = aimag(Fx)
+    Fyri(:,1:ncoeff) = real(Fy, r64)
+    Fyri(:,ncoeff+1:2*ncoeff) = aimag(Fy)
+    Fzri(:,1:ncoeff) = real(Fz, r64)
+    Fzri(:,ncoeff+1:2*ncoeff) = aimag(Fz)
+
     Ichi = (0.0_r64, 0.0_r64)
+    Ichi_ri = 0.0_r64
     g1 = -rz*ay + ry*az
     g2 =  rz*ax - rx*az
     g3 = -ry*ax + rx*ay
 
-    Bz = cmplx(g1, 0.0_r64, r64)
-    call zgemm('T','N', m, ncoeff, nbd, ONEC, Bz, nbd, Fx, nbd, ONEC, Ichi(:,:,1), m)
-    Bz = cmplx(g2, 0.0_r64, r64)
-    call zgemm('T','N', m, ncoeff, nbd, ONEC, Bz, nbd, Fy, nbd, ONEC, Ichi(:,:,1), m)
-    Bz = cmplx(g3, 0.0_r64, r64)
-    call zgemm('T','N', m, ncoeff, nbd, ONEC, Bz, nbd, Fz, nbd, ONEC, Ichi(:,:,1), m)
+    call dgemm('T','N', m, 2*ncoeff, nbd, ONE, g1, nbd, Fxri, nbd, &
+               ONE, Ichi_ri, m)
+    call dgemm('T','N', m, 2*ncoeff, nbd, ONE, g2, nbd, Fyri, nbd, &
+               ONE, Ichi_ri, m)
+    call dgemm('T','N', m, 2*ncoeff, nbd, ONE, g3, nbd, Fzri, nbd, &
+               ONE, Ichi_ri, m)
+    Ichi(:,:,1) = cmplx(Ichi_ri(:,1:ncoeff), &
+                        Ichi_ri(:,ncoeff+1:2*ncoeff), r64)
     Ichi(:,1,1) = cmplx(IalphaAsvestas, 0.0_r64, r64)
 
     Ialpha = (0.0_r64, 0.0_r64)
+    Ialpha_ri = 0.0_r64
     g1 = -(yy + zz)*bx + xy*by + xz*bz3
     g2 =  xy*bx - (xx + zz)*by + yz*bz3
     g3 =  xz*bx + yz*by - (xx + yy)*bz3
 
-    Bz = cmplx(g1, 0.0_r64, r64)
-    call zgemm('T','N', m, ncoeff, nbd, ONEC,  Bz, nbd, Fx, nbd, ONEC, Ialpha(:,:,1), m)
-    call zgemm('T','N', m, ncoeff, nbd, ONEC,  Bz, nbd, Fz, nbd, ONEC, Ialpha(:,:,3), m)
-    call zgemm('T','N', m, ncoeff, nbd, MONEC, Bz, nbd, Fy, nbd, ONEC, Ialpha(:,:,4), m)
+    call dgemm('T','N', m, 2*ncoeff, nbd, ONE,  g1, nbd, Fxri, nbd, &
+               ONE, Ialpha_ri(:,:,1), m)
+    call dgemm('T','N', m, 2*ncoeff, nbd, ONE,  g1, nbd, Fzri, nbd, &
+               ONE, Ialpha_ri(:,:,3), m)
+    call dgemm('T','N', m, 2*ncoeff, nbd, MONE, g1, nbd, Fyri, nbd, &
+               ONE, Ialpha_ri(:,:,4), m)
 
-    Bz = cmplx(g2, 0.0_r64, r64)
-    call zgemm('T','N', m, ncoeff, nbd, ONEC,  Bz, nbd, Fy, nbd, ONEC, Ialpha(:,:,1), m)
-    call zgemm('T','N', m, ncoeff, nbd, MONEC, Bz, nbd, Fz, nbd, ONEC, Ialpha(:,:,2), m)
-    call zgemm('T','N', m, ncoeff, nbd, ONEC,  Bz, nbd, Fx, nbd, ONEC, Ialpha(:,:,4), m)
+    call dgemm('T','N', m, 2*ncoeff, nbd, ONE,  g2, nbd, Fyri, nbd, &
+               ONE, Ialpha_ri(:,:,1), m)
+    call dgemm('T','N', m, 2*ncoeff, nbd, MONE, g2, nbd, Fzri, nbd, &
+               ONE, Ialpha_ri(:,:,2), m)
+    call dgemm('T','N', m, 2*ncoeff, nbd, ONE,  g2, nbd, Fxri, nbd, &
+               ONE, Ialpha_ri(:,:,4), m)
 
-    Bz = cmplx(g3, 0.0_r64, r64)
-    call zgemm('T','N', m, ncoeff, nbd, ONEC,  Bz, nbd, Fz, nbd, ONEC, Ialpha(:,:,1), m)
-    call zgemm('T','N', m, ncoeff, nbd, ONEC,  Bz, nbd, Fy, nbd, ONEC, Ialpha(:,:,2), m)
-    call zgemm('T','N', m, ncoeff, nbd, MONEC, Bz, nbd, Fx, nbd, ONEC, Ialpha(:,:,3), m)
+    call dgemm('T','N', m, 2*ncoeff, nbd, ONE,  g3, nbd, Fzri, nbd, &
+               ONE, Ialpha_ri(:,:,1), m)
+    call dgemm('T','N', m, 2*ncoeff, nbd, ONE,  g3, nbd, Fyri, nbd, &
+               ONE, Ialpha_ri(:,:,2), m)
+    call dgemm('T','N', m, 2*ncoeff, nbd, MONE, g3, nbd, Fxri, nbd, &
+               ONE, Ialpha_ri(:,:,3), m)
+
+    do k = 1, 4
+      Ialpha(:,:,k) = cmplx(Ialpha_ri(:,1:ncoeff,k), &
+                            Ialpha_ri(:,ncoeff+1:2*ncoeff,k), r64)
+    end do
 
     Fx1 = [ (0.0_r64,0.0_r64), ONEC ]
     Fy1 = [ cmplx(-sqrt(2.0_r64)/2.0_r64, 0.0_r64, r64), (0.0_r64,0.0_r64) ]
@@ -646,7 +691,7 @@ contains
     integer(8), intent(in)    :: ichart
     real(r64),  intent(in)    :: sxbd_chart(3,3*nquad), rv_chart(3,3)
 
-    integer(8), parameter :: LEN1 = 4_8, LEN2 = 8_8, LEN3 = 16_8  ! rrq :9239
+    integer(8), parameter :: LEN1 = 4_8, LEN2 = 8_8, LEN3 = 16_8
     integer(8), parameter :: NLEVEL = 4_8
     real(r64),  parameter :: RHO_SSQ = 100.0_r64                 ! rrq :609
 

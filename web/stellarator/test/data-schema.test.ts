@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   SUPPORTED_ORDERS,
+  SUPPORTED_FMM_TOLERANCES,
+  SUPPORTED_KERNELS,
   validateDiscretization,
   validateOrder,
+  validateFmmTolerance,
+  validateKernel,
   validateRestol,
   validateSolverDataset,
   validateSurface,
@@ -89,6 +93,36 @@ describe('validateRestol', () => {
     'rejects restol %s',
     (restol) => {
       expect(() => validateRestol(restol)).toThrow(/restol/i);
+    },
+  );
+});
+
+describe('validateKernel', () => {
+  it('exposes and accepts FMM and Direct', () => {
+    expect(SUPPORTED_KERNELS).toEqual(['fmm', 'direct']);
+    expect(validateKernel('fmm')).toBe('fmm');
+    expect(validateKernel('direct')).toBe('direct');
+  });
+
+  it.each(['', 'FMM', 'naive'])('rejects kernel %s', (kernel) => {
+    expect(() => validateKernel(kernel)).toThrow(/kernel/i);
+  });
+});
+
+describe('validateFmmTolerance', () => {
+  const expected = [1e-3, 1e-6, 1e-9, 1e-12, 1e-15] as const;
+
+  it('exposes the five supported FMM tolerances', () => {
+    expect(SUPPORTED_FMM_TOLERANCES).toEqual(expected);
+  });
+
+  it.each(expected)('accepts supported tolerance %s', (tolerance) => {
+    expect(validateFmmTolerance(tolerance)).toBe(tolerance);
+  });
+
+  it.each([2e-4, 0, -1e-3, Number.NaN])(
+    'rejects unsupported tolerance %s', (tolerance) => {
+      expect(() => validateFmmTolerance(tolerance)).toThrow(/FMM tolerance/i);
     },
   );
 });

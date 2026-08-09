@@ -21,7 +21,7 @@
           <section>
             <p class="section-label">Solver</p>
             <p class="solver-name">Laplace GRF</p>
-            <p class="solver-note">Naive direct kernel with close-panel correction on a coarse stellarator discretization.</p>
+            <p class="solver-note">Laplace far-field evaluation with close-panel correction on a stellarator discretization.</p>
           </section>
 
           <section>
@@ -38,6 +38,23 @@
                 <span>restol (W7-X)</span>
                 <input id="restol-input" type="number" inputmode="decimal"
                        min="0" step="any" value="0.1" disabled />
+              </label>
+              <label class="parameter" for="kernel-input">
+                <span>far field</span>
+                <select id="kernel-input">
+                  <option value="fmm" selected>FMM</option>
+                  <option value="direct">Direct (small cases)</option>
+                </select>
+              </label>
+              <label class="parameter" for="fmm-tolerance-input">
+                <span>FMM tolerance</span>
+                <select id="fmm-tolerance-input">
+                  <option value="1e-3" selected>1e-3</option>
+                  <option value="1e-6">1e-6</option>
+                  <option value="1e-9">1e-9</option>
+                  <option value="1e-12">1e-12</option>
+                  <option value="1e-15">1e-15</option>
+                </select>
               </label>
               <label class="parameter" for="order-input">
                 <span>order</span>
@@ -88,7 +105,7 @@
             </div>
           </section>
 
-          <p class="control-footer">REAL(8) · WASM32 · WEB WORKER<br />NO FMM · NO SERVER COMPUTE</p>
+          <p class="control-footer">REAL(8) · WASM32 · WEB WORKER<br />FMM3D OR DIRECT · NO SERVER COMPUTE</p>
           <p class="control-footer">Compiled from this project's Fortran with
             <a href="https://lfortran.org" rel="noopener">LFortran</a>
             (pinned commit + local patches, pending upstream) and

@@ -10,6 +10,7 @@ struct stellarator_case_config {
     int64_t mp, np, order, isimd, ichart;
     bool use_fmm, use_w7x;
     double restol;
+    double fmm_eps;
 };
 
 struct stellarator_case_result {
@@ -37,7 +38,7 @@ void simplex_precomp_r64(int64_t nquad, int64_t korder, int64_t kpols,
 void stellarator_result_clear(struct stellarator_case_result *result);
 void biesolver_scope_reset(void);
 
-enum { EMPTY, GEOMETRY, DIRECT, CLOSE, FINAL };
+enum { EMPTY, GEOMETRY, FAR_FIELD, CLOSE, FINAL };
 static int solver_state = EMPTY;
 static int solver_error = 0;
 static struct r64 sx, snx, sw, ub, ubn, u, render_xyz, render_log_error;
@@ -125,7 +126,7 @@ int solver_simplex_precomp(int64_t nquad, int64_t korder, int64_t kpols,
     return 0;
 }
 
-int solver_prepare_geometry(void)
+static int solver_prepare_geometry(void)
 {
     if (solver_state != EMPTY) return fail(101);
     solver_error = 0;
@@ -133,37 +134,42 @@ int solver_prepare_geometry(void)
     return 0;
 }
 
-int solver_run_direct(void)
+static int solver_run_far_field(void)
 {
     if (solver_state != GEOMETRY) return fail(102);
-    solver_state = DIRECT;
+    solver_state = FAR_FIELD;
     return 0;
 }
 
-int solver_run_close(int64_t mp, int64_t np, int64_t order,
-                     int64_t surface, double restol,
+static int solver_run_close(int64_t mp, int64_t np, int64_t order,
+                     int64_t surface, double restol, int64_t kernel,
+                     double fmm_tolerance,
                      double *tgl_data, double *wgl_data, double *dgl_data,
                      double *w_bclag_data, double *legmat_data,
                      double *umatr_data, double *vmatr_data)
 {
-    struct stellarator_case_config cfg = {mp, np, order, 0, 1, false,
-                                          surface == 1, restol};
+    struct stellarator_case_config cfg = {mp, np, order, 0, 1, kernel == 1,
+                                          surface == 1, restol, fmm_tolerance};
     int64_t status = 0;
     int64_t kpols = order * (order + 1) / 2;
     struct r64 refs[7];
-    if (solver_state != DIRECT) return fail(103);
+    if (solver_state != FAR_FIELD) return fail(103);
     if (!bind_simplex_precomp(order + 2, kpols, tgl_data, wgl_data, dgl_data,
             w_bclag_data, legmat_data, umatr_data, vmatr_data, refs))
         return fail(109);
     stellarator_run_case(&cfg, &refs[0], &refs[1], &refs[2], &refs[3],
                          &refs[4], &refs[5], &refs[6], &result, &status,
                          NULL, false, NULL, false, NULL, false);
-    if (status != 0) return fail((int)(200 + status));
+    if (status != 0) {
+        stellarator_result_clear(&result);
+        biesolver_scope_reset();
+        return fail((int)(200 + status));
+    }
     solver_state = CLOSE;
     return 0;
 }
 
-int solver_finalize_result(void)
+static int solver_finalize_result(void)
 {
     if (solver_state != CLOSE) return fail(104);
     solver_state = FINAL;
@@ -178,8 +184,15 @@ void solver_clear(void)
     solver_error = 0;
 }
 
+static int valid_fmm_tolerance(double value)
+{
+    return value == 1.0e-3 || value == 1.0e-6 || value == 1.0e-9 ||
+           value == 1.0e-12 || value == 1.0e-15;
+}
+
 int solver_run(int64_t mp, int64_t np, int64_t order,
-               int64_t surface, double restol,
+               int64_t surface, double restol, int64_t kernel,
+               double fmm_tolerance,
                double *tgl_data, double *wgl_data, double *dgl_data,
                double *w_bclag_data, double *legmat_data,
                double *umatr_data, double *vmatr_data)
@@ -192,10 +205,12 @@ int solver_run(int64_t mp, int64_t np, int64_t order,
     if (order < 4 || order > 16 || order % 2 != 0) return fail(106);
     if (surface != 0 && surface != 1) return fail(107);
     if (surface == 1 && (!isfinite(restol) || restol <= 0.0)) return fail(108);
+    if (kernel != 0 && kernel != 1) return fail(110);
+    if (!valid_fmm_tolerance(fmm_tolerance)) return fail(111);
     if (tgl_data == NULL || wgl_data == NULL || dgl_data == NULL ||
         w_bclag_data == NULL || legmat_data == NULL || umatr_data == NULL ||
         vmatr_data == NULL) return fail(109);
-    if (surface == 0) {
+    if (kernel == 0 && surface == 0) {
         /* Built-in surface: at most four triangles per mp*np cell.  The
            largest single allocation is one 64-by-nsrc double-precision
            direct-interaction block.  The W7-X panel count is data-dependent
@@ -214,8 +229,9 @@ int solver_run(int64_t mp, int64_t np, int64_t order,
             return fail(105);
     }
     status = solver_prepare_geometry();
-    if (status == 0) status = solver_run_direct();
+    if (status == 0) status = solver_run_far_field();
     if (status == 0) status = solver_run_close(mp, np, order, surface, restol,
+        kernel, fmm_tolerance,
         tgl_data, wgl_data, dgl_data, w_bclag_data, legmat_data,
         umatr_data, vmatr_data);
     if (status == 0) status = solver_finalize_result();

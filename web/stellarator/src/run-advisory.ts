@@ -1,4 +1,9 @@
-import type { SolverOrder, SolverSurface } from './data-schema';
+import type {
+  FmmTolerance,
+  SolverKernel,
+  SolverOrder,
+  SolverSurface,
+} from './data-schema';
 
 /**
  * The one browser configuration whose W7-X source count has actually been
@@ -41,21 +46,26 @@ export function runAdvisory(
   mp: number,
   np: number,
   restol: number,
+  kernel: SolverKernel,
+  fmmTolerance: FmmTolerance | number,
 ): string {
-  if (surface !== 'w7x') return '';
+  let surfaceAdvice = '';
 
-  if (order === 4) {
-    return `W7-X at order 4 has no frozen W7-X parity reference; ` +
-      `${REFERENCE_PHRASE}. The direct sum is O(N²), so solve time grows ` +
-      `quadratically with the source count.`;
+  if (surface === 'w7x' && order === 4) {
+    surfaceAdvice = `W7-X at order 4 has no frozen W7-X parity reference; ` +
+      `${REFERENCE_PHRASE}.`;
+  } else if (surface === 'w7x' && isMeasuredReference(order, mp, np, restol)) {
+    surfaceAdvice = `This is the measured W7-X reference (N=${NODES}): ` +
+      `${NODES} source nodes.`;
+  } else if (surface === 'w7x') {
+    surfaceAdvice = `W7-X source node count is data-dependent: curvature ` +
+      `refinement decides the chart count, so N is only known after real ` +
+      `geometry is built. For scale, ${REFERENCE_PHRASE}.`;
   }
 
-  if (isMeasuredReference(order, mp, np, restol)) {
-    return `This is the measured W7-X reference (N=${NODES}): ` +
-      `${NODES} source nodes. The direct sum is O(N²).`;
-  }
-
-  return `W7-X source node count is data-dependent: curvature refinement ` +
-    `decides the chart count, so N is only known after real geometry is ` +
-    `built. For scale, ${REFERENCE_PHRASE}.`;
+  const kernelAdvice = kernel === 'direct'
+    ? `Direct uses O(N²) work; the selected FMM tolerance ` +
+      `${Number(fmmTolerance).toExponential(0)} is ignored.`
+    : '';
+  return [surfaceAdvice, kernelAdvice].filter(Boolean).join(' ');
 }

@@ -2,6 +2,8 @@ import './style.css';
 import { runAdvisory } from './run-advisory';
 import {
   validateDiscretization,
+  validateFmmTolerance,
+  validateKernel,
   validateOrder,
   validateRestol,
   validateSolverDataset,
@@ -31,6 +33,8 @@ const npInput = element<HTMLInputElement>('#np-input');
 const orderInput = element<HTMLSelectElement>('#order-input');
 const surfaceInput = element<HTMLSelectElement>('#surface-input');
 const restolInput = element<HTMLInputElement>('#restol-input');
+const kernelInput = element<HTMLSelectElement>('#kernel-input');
+const fmmToleranceInput = element<HTMLSelectElement>('#fmm-tolerance-input');
 const advisory = element<HTMLParagraphElement>('#run-advisory');
 const solverLog = element<HTMLElement>('#solver-log');
 // Authoritative line record; kept 1:1 with the rendered children so the
@@ -66,12 +70,15 @@ function refreshAdvisory(): void {
     Number(mpInput.value),
     Number(npInput.value),
     Number(restolInput.value),
+    validateKernel(kernelInput.value),
+    validateFmmTolerance(Number(fmmToleranceInput.value)),
   );
   advisory.textContent = text;
   advisory.hidden = text === '';
 }
 
-for (const control of [surfaceInput, orderInput, mpInput, npInput, restolInput]) {
+for (const control of [surfaceInput, orderInput, mpInput, npInput, restolInput,
+  kernelInput, fmmToleranceInput]) {
   control.addEventListener('change', refreshAdvisory);
   control.addEventListener('input', refreshAdvisory);
 }
@@ -120,11 +127,15 @@ runButton.addEventListener('click', () => {
   let order;
   let surface;
   let restol;
+  let kernel;
+  let fmmTolerance;
   try {
     discretization = validateDiscretization(Number(mpInput.value), Number(npInput.value));
     order = validateOrder(Number(orderInput.value));
     surface = validateSurface(surfaceInput.value);
     restol = surface === 'w7x' ? validateRestol(Number(restolInput.value)) : 0.1;
+    kernel = validateKernel(kernelInput.value);
+    fmmTolerance = validateFmmTolerance(Number(fmmToleranceInput.value));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     placeholder.hidden = false;
@@ -138,7 +149,7 @@ runButton.addEventListener('click', () => {
   const moduleUrl = new URL(`${import.meta.env.BASE_URL}wasm/solver.js`, document.baseURI).href;
   worker.postMessage({
     type: 'run', requestId: activeRequest, moduleUrl, ...discretization, order,
-    surface, restol,
+    surface, restol, kernel, fmmTolerance,
   });
 });
 
@@ -159,6 +170,9 @@ function createWorker(): Worker {
       placeholder.hidden = false;
       placeholder.textContent = message.message;
       appendLog(`[error] ${message.message}`);
+      next.terminate();
+      worker = createWorker();
+      activeRequest = 0;
       setState('error', 'Solver failed');
       return;
     }
@@ -187,6 +201,9 @@ function createWorker(): Worker {
     placeholder.hidden = false;
     placeholder.textContent = message;
     appendLog(`[error] ${message}`);
+    next.terminate();
+    worker = createWorker();
+    activeRequest = 0;
     setState('error', 'Worker error');
   };
   return next;

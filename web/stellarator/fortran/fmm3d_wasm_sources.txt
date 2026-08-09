@@ -1,0 +1,28 @@
+# FMM3D non-fast Common objects (without diagnostic-only prini.f).
+src/Common/besseljs3d.f
+src/Common/cdjseval3d.f
+src/Common/dfft.f
+src/Common/fmmcommon.f
+src/Common/legeexps.f
+src/Common/rotgen.f
+src/Common/rotproj.f
+src/Common/rotviarecur.f
+src/Common/tree_routs3d.f
+src/Common/pts_tree3d.f
+src/Common/yrecursion.f
+src/Common/cumsum.f
+
+# FMM3D non-fast Laplace objects.
+src/Laplace/lwtsexp_sep1.f
+src/Laplace/l3dterms.f
+src/Laplace/l3dtrans.f
+src/Laplace/laprouts3d.f
+src/Laplace/lfmm3d.f
+src/Laplace/lfmm3dwrap.f
+src/Laplace/lfmm3dwrap_legacy.f
+src/Laplace/lfmm3dwrap_vec.f
+src/Laplace/lwtsexp_sep2.f
+src/Laplace/lpwrouts.f
+src/Laplace/lfmm3d_ndiv.f
+src/Laplace/lapkernels.f
+src/Laplace/lndiv.f

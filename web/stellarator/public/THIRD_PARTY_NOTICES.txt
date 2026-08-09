@@ -79,5 +79,32 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 
+FMM3D
+-----
+https://github.com/flatironinstitute/FMM3D
+
+Copyright (C) 2019-2023 The Simons Foundation, Inc., FMM3D Development Team
+(see the upstream AUTHORS file). All rights reserved.
+
+The serial Common and Laplace source closure embedded in solver.wasm is
+distributed under the Apache License, Version 2.0. The included dfft.f,
+lwtsexp_sep1.f, and lwtsexp_sep2.f files are public domain as documented in
+the upstream source files. The complete FMM3D license and attributions are at:
+https://github.com/flatironinstitute/FMM3D/blob/master/LICENSE
+
+
+fort2c
+------
+https://github.com/magland/fort2c
+
+fort2c is distributed under the Apache License, Version 2.0. It is a build-time
+translator and is not itself linked into solver.wasm; its generated C output is
+used to compile the FMM3D closure. The complete license is at:
+https://github.com/magland/fort2c/blob/main/LICENSE
+
+Apache License, Version 2.0:
+https://www.apache.org/licenses/LICENSE-2.0
+
+
 Names of the projects above are used only to describe the toolchain that
 produced this page; no endorsement by them is implied.

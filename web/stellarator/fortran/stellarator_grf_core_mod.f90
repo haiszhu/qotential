@@ -55,8 +55,8 @@ module stellarator_grf_core_mod
   ! Stage codes are a stable part of the browser progress contract.
   integer(c_int), parameter :: PROGRESS_GEOMETRY_BEGIN   = 1_c_int
   integer(c_int), parameter :: PROGRESS_GEOMETRY_READY   = 2_c_int
-  integer(c_int), parameter :: PROGRESS_DIRECT_BEGIN     = 3_c_int
-  integer(c_int), parameter :: PROGRESS_DIRECT_STEP      = 4_c_int
+  integer(c_int), parameter :: PROGRESS_FAR_BEGIN        = 3_c_int
+  integer(c_int), parameter :: PROGRESS_FAR_STEP         = 4_c_int
   integer(c_int), parameter :: PROGRESS_COUNT_BEGIN      = 5_c_int
   integer(c_int), parameter :: PROGRESS_COUNT_STEP       = 6_c_int
   integer(c_int), parameter :: PROGRESS_RRQ_BEGIN        = 7_c_int
@@ -74,6 +74,7 @@ module stellarator_grf_core_mod
     ! W7-X curvature refinement tolerance; the mesh criterion runs at the
     ! solve order.  Ignored for the built-in surface.
     real(r64) :: restol = 1.0e-1_r64
+    real(r64) :: fmm_eps = 1.0e-3_r64
   end type stellarator_case_config
 
   type, public :: stellarator_case_result
@@ -208,10 +209,27 @@ module stellarator_grf_core_mod
     subroutine lfmm3d_t_cd_p(eps, nsource, source, charge, dipvec, &
                              ntarg, targ, pottarg, ier) &
         bind(C, name='lfmm3d_t_cd_p_')
-      integer(8) :: nsource, ntarg, ier
-      real(8)    :: eps, source(3,*), charge(*), dipvec(3,*)
-      real(8)    :: targ(3,*), pottarg(*)
+      integer(8), intent(in) :: nsource, ntarg
+      integer(8), intent(out) :: ier
+      real(8), intent(in) :: eps, source(3,*), charge(*), dipvec(3,*)
+      real(8), intent(in) :: targ(3,*)
+      real(8), intent(out) :: pottarg(*)
     end subroutine lfmm3d_t_cd_p
+#endif
+
+#ifdef BIESOLVER_WASM_FMM3D
+    subroutine biesolver_lfmm3d_t_cd_p_rowmajor(eps, nsource, source, &
+        charge, dipvec, ntarg, targ, pottarg, ier, adapter_status, elapsed) &
+        bind(C, name='biesolver_lfmm3d_t_cd_p_rowmajor')
+      import :: c_double, c_long_long
+      real(c_double), value :: eps
+      integer(c_long_long), value :: nsource, ntarg
+      real(c_double), intent(in) :: source(3,nsource), charge(nsource)
+      real(c_double), intent(in) :: dipvec(3,nsource), targ(3,ntarg)
+      real(c_double), intent(out) :: pottarg(ntarg)
+      integer(c_long_long), intent(out) :: ier, adapter_status
+      real(c_double), intent(out) :: elapsed
+    end subroutine biesolver_lfmm3d_t_cd_p_rowmajor
 #endif
 
 #ifdef BIESOLVER_WASM_SCALAR_ONLY
@@ -256,10 +274,10 @@ contains
 
   integer(8) :: mp, np, nterms, hdim, nquad, orderff, ntri, nsrc
   integer(8) :: isimd, ichart
-  integer(8) :: k, i, j, ier, nbd, sbdnp, nnz, mtcmax
+  integer(8) :: k, i, j, ier, adapter_status, nbd, sbdnp, nnz, mtcmax
   integer(8) :: cap, nchart, ib, mb
   integer(c_int) :: geometry_ierr
-  real(r64)  :: distff, timeinfo(20), err, fmm_eps, umax, ubnmax
+  real(r64)  :: distff, timeinfo(20), err, umax, ubnmax
   real(r64)  :: pi, tt, th1, th2, thi1
   real(r64)  :: t_fmm, t_close, t_geo, w0, w1p, w2p, w3p
   integer(8) :: c0, c1, crate
@@ -298,7 +316,6 @@ contains
     np      = cfg%np
     isimd   = cfg%isimd
     ichart  = cfg%ichart
-    fmm_eps = fmm_tolerance(nterms)
     hdim    = nterms*(nterms+1_8)/2_8
     nquad   = nterms + 2_8
     orderff = nterms + 2_8
@@ -350,9 +367,11 @@ contains
 #ifdef BIESOLVER_WASM_SCALAR_ONLY
       ! A 64-by-nsrc direct block above the allocator's single-request limit
       ! would abort inside the allocator; reject it before allocating instead.
-      if (biesolver_wasm_memory_preflight(int(nsrc,c_long_long)) == 0_c_int) then
-        status = 15_8
-        return
+      if (.not. cfg%use_fmm) then
+        if (biesolver_wasm_memory_preflight(int(nsrc,c_long_long)) == 0_c_int) then
+          status = 15_8
+          return
+        end if
       end if
 #endif
       allocate(sx(3,nsrc), snx(3,nsrc), sw(nsrc), rts(3,nsrc), rps(3,nsrc))
@@ -386,9 +405,11 @@ contains
 #ifdef BIESOLVER_WASM_SCALAR_ONLY
       ! A 64-by-nsrc direct block above the allocator's single-request limit
       ! would abort inside the allocator; reject it before allocating instead.
-      if (biesolver_wasm_memory_preflight(int(nsrc,c_long_long)) == 0_c_int) then
-        status = 15_8
-        return
+      if (.not. cfg%use_fmm) then
+        if (biesolver_wasm_memory_preflight(int(nsrc,c_long_long)) == 0_c_int) then
+          status = 15_8
+          return
+        end if
       end if
 #endif
       allocate(sx(3,nsrc), snx(3,nsrc), sw(nsrc), rts(3,nsrc), rps(3,nsrc))
@@ -407,9 +428,11 @@ contains
 #ifdef BIESOLVER_WASM_SCALAR_ONLY
       ! A 64-by-nsrc direct block above the allocator's single-request limit
       ! would abort inside the allocator; reject it before allocating instead.
-      if (biesolver_wasm_memory_preflight(int(nsrc,c_long_long)) == 0_c_int) then
-        status = 15_8
-        return
+      if (.not. cfg%use_fmm) then
+        if (biesolver_wasm_memory_preflight(int(nsrc,c_long_long)) == 0_c_int) then
+          status = 15_8
+          return
+        end if
       end if
 #endif
       allocate(sx(3,nsrc), snx(3,nsrc), sw(nsrc), rts(3,nsrc), rps(3,nsrc))
@@ -439,26 +462,57 @@ contains
     ! kernel 1/(4 pi r), self term dropped by the FMM
     allocate(u(nsrc))
 #ifdef BIESOLVER_WASM_SCALAR_ONLY
+#ifndef BIESOLVER_WASM_FMM3D
     if (cfg%use_fmm) then
       status = 1_8
       return
     end if
 #endif
-#ifndef BIESOLVER_WASM_SCALAR_ONLY
-    if (cfg%use_fmm) then
-    allocate(charge(nsrc), dipvec(3,nsrc))
-    charge = sw*ubn
-    do i = 1, nsrc
-      dipvec(:,i) = -sw(i)*ub(i)*snx(:,i)
-    end do
-    call system_clock(c0)
-    ier = 0_8
-    call lfmm3d_t_cd_p(fmm_eps, nsrc, sx, charge, dipvec, nsrc, sx, u, ier)
-    call system_clock(c1);  t_fmm = real(c1-c0, r64)/real(crate, r64)
-    if (ier /= 0_8) write(*,'(a,i0)') 'WARNING: lfmm3d ier = ', ier
-    deallocate(charge, dipvec)
-    else
 #endif
+    if (cfg%use_fmm) then
+      allocate(charge(nsrc), dipvec(3,nsrc))
+      charge = sw*ubn
+      do i = 1, nsrc
+        dipvec(:,i) = -sw(i)*ub(i)*snx(:,i)
+      end do
+      ier = 0_8
+      adapter_status = 0_8
+#ifdef BIESOLVER_WASM_PROGRESS
+      call biesolver_progress(PROGRESS_FAR_BEGIN, 0_c_long_long, &
+        1_c_long_long, 1_c_long_long, 0_c_long_long, 0.0_c_double)
+#endif
+#ifdef BIESOLVER_WASM_FMM3D
+      call biesolver_lfmm3d_t_cd_p_rowmajor(cfg%fmm_eps, nsrc, sx, &
+        charge, dipvec, nsrc, sx, u, ier, adapter_status, t_fmm)
+#else
+#ifndef BIESOLVER_WASM_SCALAR_ONLY
+      call system_clock(c0)
+      call lfmm3d_t_cd_p(cfg%fmm_eps, nsrc, sx, charge, dipvec, nsrc, sx, u, ier)
+      call system_clock(c1);  t_fmm = real(c1-c0, r64)/real(crate, r64)
+#endif
+#endif
+      deallocate(charge, dipvec)
+      if (adapter_status /= 0_8) then
+        status = 16_8
+      else if (ier == 4_8) then
+        status = 17_8
+      else if (ier == 8_8) then
+        status = 18_8
+      else if (ier /= 0_8) then
+        status = 19_8
+      end if
+      if (status /= 0_8) return
+      do i = 1, nsrc
+        if (u(i) /= u(i) .or. abs(u(i)) > 1.0e300_r64) then
+          status = 19_8
+          return
+        end if
+      end do
+#ifdef BIESOLVER_WASM_PROGRESS
+      call biesolver_progress(PROGRESS_FAR_STEP, 1_c_long_long, &
+        1_c_long_long, 1_c_long_long, 0_c_long_long, real(t_fmm,c_double))
+#endif
+    else
 #ifndef BIESOLVER_WASM_SCALAR_ONLY
       call system_clock(c0, crate)
 #else
@@ -474,7 +528,7 @@ contains
                         STELLARATOR_TARGET_BLOCK
         completed = 0_8
         call stellarator_progress_reset(direct_progress)
-        call biesolver_progress(PROGRESS_DIRECT_BEGIN, 0_c_long_long, &
+        call biesolver_progress(PROGRESS_FAR_BEGIN, 0_c_long_long, &
           int(target_blocks,c_long_long), 0_c_long_long, 0_c_long_long, &
           0.0_c_double)
 #endif
@@ -498,7 +552,7 @@ contains
           completed = completed + 1_8
           call stellarator_progress_step(direct_progress, completed, &
             target_blocks, emit_progress)
-          if (emit_progress) call biesolver_progress(PROGRESS_DIRECT_STEP, &
+          if (emit_progress) call biesolver_progress(PROGRESS_FAR_STEP, &
             int(completed,c_long_long), int(target_blocks,c_long_long), &
             0_c_long_long, 0_c_long_long, 0.0_c_double)
 #endif
@@ -509,9 +563,7 @@ contains
       call system_clock(c1)
       t_fmm = real(c1-c0, r64)/real(crate, r64)
 #endif
-#ifndef BIESOLVER_WASM_SCALAR_ONLY
     end if
-#endif
 
     ! ---- chart boundary parameterization table ----
     sbdnp = 3_8;  nbd = sbdnp*nquad
@@ -968,25 +1020,6 @@ contains
       sin(STELLARATOR_LAM*x(2))
     g(3) =  0.0_r64
   end function gradf_harm
-
-  pure function fmm_tolerance(order) result(tol)
-    integer(8), intent(in) :: order
-    real(r64) :: tol
-    select case (order)
-    case (4_8)
-      tol = 1.0e-04_r64
-    case (6_8)
-      tol = 1.0e-06_r64
-    case (8_8)
-      tol = 1.0e-08_r64
-    case (10_8)
-      tol = 1.0e-09_r64
-    case (12_8)
-      tol = 1.0e-11_r64
-    case default
-      tol = 1.0e-14_r64
-    end select
-  end function fmm_tolerance
 
   subroutine map_panel_uv_bridge(use_w7x, cl, nchart, mp, np, nterms, tgl, &
                                  itri, nuv, uv, mn, rc, zs, x, ierr)

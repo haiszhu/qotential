@@ -52,9 +52,12 @@ scope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
     // The generated core exposes one atomic solve. Keep the
     // UI honest about that boundary instead of presenting adapter state changes
     // as separately timed numerical phases.
+    const kernelDescription = request.kernel === 'fmm'
+      ? `FMM3D (eps=${request.fmmTolerance})`
+      : 'direct kernel';
     progress(request.requestId,
       `Running ${request.surface} surface at order ${request.order}, ` +
-      `${request.mp} × ${request.np}, direct kernel, and close correction`);
+      `${request.mp} × ${request.np}, ${kernelDescription}, and close correction`);
     // Real Fortran stages append log lines through this forwarder while the
     // atomic solve runs.  withSolverProgress installs the callback only for the
     // duration of _solver_run and clears it before any render buffers are read.
@@ -69,6 +72,7 @@ scope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           solveModule._solver_run(
             BigInt(request.mp), BigInt(request.np), BigInt(request.order),
             BigInt(request.surface === 'w7x' ? 1 : 0), request.restol,
+            BigInt(request.kernel === 'fmm' ? 1 : 0), request.fmmTolerance,
             refs.tgl, refs.wgl, refs.Dgl, refs.wBclag,
             refs.Legmat, refs.umatr, refs.vmatr,
           ), lastError);

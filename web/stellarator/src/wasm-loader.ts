@@ -10,6 +10,7 @@ export interface SolverWasmModule {
   ): number;
   _solver_run(
     mp: bigint, np: bigint, order: bigint, surface: bigint, restol: number,
+    kernel: bigint, fmmTolerance: number,
     tgl: number, wgl: number, Dgl: number, wBclag: number,
     Legmat: number, umatr: number, vmatr: number,
   ): number;

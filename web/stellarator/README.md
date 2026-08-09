@@ -1,9 +1,13 @@
 ```mermaid
 flowchart LR
     F["Real Fortran stellarator example"] --> C["Shared scalar-order core"]
-    C --> D["Existing scalar direct S/D kernel"]
+    C --> K{"Far-field choice"}
+    K --> D["Existing scalar direct S/D kernel"]
+    K --> A["LFortran/FMM layout adapter"]
+    F3["FMM3D Common + Laplace Fortran"] --> F2C["fort2c-generated C"] --> A
     C --> R["Existing RRQ close correction"]
     D --> API["Thin bind(C) WASM API"]
+    A --> API
     R --> API
     G["Production stellarator geometry C"] --> EM["Emscripten final link"]
     API --> LC["LFortran C backend"] --> EM
@@ -24,9 +28,12 @@ qotential/
     └── stellarator/
         ├── fortran/
         │   ├── stellarator_grf_core_mod.f90
+        │   ├── fmm3d_wasm_sources.txt
         │   ├── stellarator_wasm_api.f90
         │   └── wasm_sources.txt
         ├── native/
+        │   ├── fmm3d_layout_adapter.c
+        │   ├── fmm3d_c.h
         │   ├── geometry_layout_adapter.c
         │   ├── wasm_blas_shim.c
         │   └── wasm_api_adapter.c
@@ -40,9 +47,11 @@ qotential/
         │   └── colormap.ts
         ├── scripts/
         │   ├── build-lfortran.sh
+        │   ├── build-fmm3d-wasm.sh
         │   ├── build-wasm.sh
         │   └── generate-w7x-modes.py
         ├── patches/
+        │   ├── fort2c-allocate-stat.patch
         │   └── lfortran-c-backend.patch
         ├── test/
         │   ├── data-schema.test.ts
@@ -63,21 +72,30 @@ qotential/
 
 ## Run the implemented page
 
-The first browser executable is complete. It runs the real scalar Fortran path
-at a selected even order from 4 through 16 in a Web Worker and renders the
-built-in stellarator lattice with WebGPU; there is no TypeScript or WGSL
-solver. From this directory:
+The browser executable runs the real scalar Fortran path at a selected even
+order from 4 through 16 in a Web Worker and renders either the built-in
+stellarator or W7-X lattice with WebGPU; there is no TypeScript or WGSL
+solver. The far field is selectable at runtime: serial FMM3D is the default,
+and the existing blocked Direct evaluator remains available as the reference
+path. FMM tolerances are `1e-3`, `1e-6`, `1e-9`, `1e-12`, and `1e-15`, with
+`1e-3` as the default. The tolerance selector is ignored when Direct is
+selected.
+
+To view the currently built `public/wasm` artifact without recompiling it:
 
 ```sh
 npm install
-LF=/path/to/patched/lfortran make app
 npm run dev
 ```
 
-Open the printed local URL and press **Run Fortran solver**. A current browser
-with WebGPU support is required. The static deployment product is `dist/`;
-`vite.config.ts` uses a relative base so it can be hosted below a repository
-subpath as well as at a domain root.
+To rebuild the complete solver before opening the page, follow the toolchain
+setup below and run `make serve` with `LF`, `FMM3D_SRC`, `FORT2C`, `LLVM_NM`,
+and `EM_CACHE` configured. Open the URL printed by Vite and press **Run Fortran
+solver**.
+
+A current browser with WebGPU support is required. The static deployment
+product is `dist/`; `vite.config.ts` uses a relative base so it can be hosted
+below a repository subpath as well as at a domain root.
 
 ## Manually deploy to GitHub Pages
 
@@ -116,13 +134,17 @@ It reports real progress from the running solver, not a timer estimate:
 
 - Every Run clears the previous log; the completion, error, or cancellation
   lines from a run stay visible until the next Run begins.
-- Each line originates in the real Fortran stages (geometry, direct Laplace
-  GRF, close-target counting, RRQ correction, scatter, render, result). The
+- Each line originates in the real numerical stages (geometry, selected
+  Direct or FMM3D Laplace GRF, close-target counting, RRQ correction, scatter,
+  render, result). The
   event travels through LFortran-generated C and an Emscripten `EM_JS` callback
   bridge (`native/wasm_progress_bridge.c`) into the Web Worker.
-- Long loops emit deterministic milestones every 2 percent plus exactly one
-  final 100-percent event; the Worker additionally throttles ordinary lines to
-  about 250 ms per stage. Stage boundaries and final events are never throttled.
+- Direct and RRQ loops emit deterministic milestones every 2 percent plus
+  exactly one final 100-percent event; the Worker additionally throttles
+  ordinary lines to about 250 ms per stage. FMM3D has no trustworthy internal
+  percentage callback, so it emits only begin and completion events with the
+  measured FMM wall time. Stage boundaries and final events are never
+  throttled.
 - The final `[result]` GRF line is the solver's own returned value, and the
   elapsed-time line uses the Worker's own `performance.now()` measurement.
 - Cancellation terminates the Worker and leaves one `[cancelled]` line; no
@@ -148,6 +170,7 @@ Package prerequisites, none of which macOS supplies in a usable form:
 | `llvm` | `llvm-nm`, used to audit the wasm object | `brew install llvm` |
 | `cmake`, `ninja` | configures and builds the pinned LFortran checkout | `brew install cmake ninja` |
 | Python 3.12 | `build0.sh` calls bare `python`, absent since Catalina | `brew install python@3.12` |
+| `uv` | installs the pinned, locally patched fort2c with Python 3.12 | `brew install uv` |
 
 Homebrew keeps `bison` and `llvm` keg-only, so neither lands on `PATH`. That
 is deliberate below rather than worked around with `brew link`.
@@ -217,13 +240,49 @@ LF=~/lfortran/build/src/bin/lfortran test/probe-script.test.sh
 `scripts/build-lfortran.sh <source>` wraps steps 4 and 5 and additionally
 re-verifies the applied patch against `patches/lfortran-c-backend.patch`.
 
-**6. Build the wasm and serve the page.**
+**6. Install the FMM3D and fort2c inputs.**
+
+The browser build accepts FMM3D 2.0 or newer and records the exact source
+commit in its cache stamp. The default location is `~/git/FMM3D`:
+
+```sh
+mkdir -p "$HOME/git"
+git clone https://github.com/flatironinstitute/FMM3D.git "$HOME/git/FMM3D"
+git -C "$HOME/git/FMM3D" describe --tags --always
+```
+
+fort2c is pinned because its generated ABI is part of this build. Install the
+checked commit after applying the repository's allocation-status patch. Run
+these commands from this README's directory:
+
+```sh
+git clone https://github.com/magland/fort2c.git "$HOME/fort2c"
+git -C "$HOME/fort2c" checkout 7f7fda827260df4f7ff1bfcaf1c420e3e809ac7b
+git -C "$HOME/fort2c" apply "$PWD/patches/fort2c-allocate-stat.patch"
+uv tool install --force --python 3.12 "$HOME/fort2c"
+fort2c --version
+bash test/fort2c-allocate-stat.test.sh
+```
+
+If `fort2c` is not found after installation, run `uv tool update-shell`, open
+a new shell, or add `$HOME/.local/bin` to `PATH`. Do not install an unpatched
+PyPI/GitHub version in its place: the semantic probe deliberately rejects a
+translator that reports successful `allocate(...,stat=ier)` after `malloc`
+returns null.
+
+On a machine where either checkout already exists, inspect its commit and
+working tree before updating it. Do not blindly clone over or reset a checkout
+that contains local work.
+
+**7. Build the wasm and serve the page.**
 
 ```sh
 npm install
 LF=~/lfortran/build/src/bin/lfortran \
 LLVM_NM="$(brew --prefix llvm)/bin/llvm-nm" \
 EM_CACHE="$HOME/.cache/biesolver-emscripten" \
+FMM3D_SRC="$HOME/git/FMM3D" \
+FORT2C="$(command -v fort2c)" \
   make serve
 ```
 
@@ -240,9 +299,16 @@ EM_CACHE="$HOME/.cache/biesolver-emscripten" \
   non-symlinked directory fixes it. `em-config CACHE` reports Emscripten's own
   default if you would rather use that.
 
-Emscripten is deliberately *not* version-pinned the way LFortran is; 6.0.6 is
-what this was verified against. If a future release changes its cache layout or
-system-library build, this step is where it will show.
+Emscripten is deliberately *not* version-pinned the way LFortran and fort2c
+are; 6.0.6 is what this was verified against. If a future release changes its
+cache layout or system-library build, this step is where it will show.
+
+The final `solver.wasm` is one module. LFortran translates the qotential and
+geometry-side Fortran to C; fort2c translates only the serial FMM3D Common and
+Laplace closure; Emscripten compiles and links both C families. gfortran is
+used for the independent native FMM3D and solver references, while native
+Clang validates fort2c output before the same generated C is sent through
+Emscripten. Neither gfortran nor native Clang is embedded in the browser.
 
 `public/wasm/`, `build-wasm/`, `dist/`, and `node_modules/` are generated and
 ignored. The native truth fixture under `fixtures/native/` is versioned input
@@ -259,6 +325,8 @@ shell used for development:
 export LF="$HOME/lfortran/build/src/bin/lfortran"
 export LLVM_NM="$(brew --prefix llvm)/bin/llvm-nm"
 export EM_CACHE="$HOME/.cache/biesolver-emscripten"
+export FMM3D_SRC="$HOME/git/FMM3D"
+export FORT2C="$(command -v fort2c)"
 ```
 
 On a new checkout, or after `package-lock.json` changes, install the exact
@@ -272,6 +340,33 @@ make app
 `make app` regenerates `public/wasm/solver.js` and `solver.wasm`, runs the
 TypeScript tests, and creates the static site in `dist/`. It does not run the
 long numerical parity suite.
+
+The FMM3D Common/Laplace translation is cached in
+`build-fmm3d/libfmm3d-wasm.a`. Its stamp covers the FMM3D commit, manifest and
+source hashes, fort2c command/version and patch digest, runtime header,
+Emscripten version, and FMM compile flags. A normal `make wasm` reports
+`FMM3D_WASM_CACHE_HIT` when none of those inputs changed. Force only that
+translation to rebuild with:
+
+```sh
+FMM3D_REBUILD=1 make wasm
+```
+
+Useful focused checks, ordered from the translator boundary to the complete
+solver, are:
+
+```sh
+make fmm3d-test
+bash test/fmm3d-fort2c-native.test.sh  # fort2c C compiled by native Clang
+bash test/fmm3d-fort2c-wasm.test.sh    # same closure compiled by Emscripten
+WASM_SKIP_W7X=1 node test/wasm-api-node.mjs
+make parity                            # includes the longer W7-X FMM gate
+```
+
+The native reference for the original FMM3D checkout is separate from these
+fort2c tests. Build and run an upstream Laplace test with gfortran first when
+diagnosing a new FMM3D checkout; this distinguishes an upstream/native setup
+problem from fort2c, Emscripten, or browser integration.
 
 The browser owns the seven simplex-precomputation buffers explicitly. For each
 solve it allocates `tgl`, `wgl`, `Dgl`, `w_bclag`, `Legmat`, `umatr`, and
@@ -310,7 +405,8 @@ Use the smallest rebuild that matches the files changed:
 | Changed files | Required action |
 |---|---|
 | `index.html`, `src/*.ts`, or `src/style.css` | A running `npm run dev` rebuilds the front end automatically; run `npm run build` before delivery. |
-| Fortran in `fortran/`, the qotential/QuatApproximation/LineQuaaadrature source closure, `native/*.c`, `native/*.h`, or the WASM ABI/build scripts | Run `make wasm`, then reload the page. Add any new Fortran module to `fortran/wasm_sources.txt` in dependency order. |
+| Fortran in `fortran/`, the qotential/QuatApproximation/LineQuaaadrature source closure, `native/*.c`, `native/*.h`, or the WASM ABI/build scripts | Run `make wasm`, then reload the page. Add any new LFortran module to `fortran/wasm_sources.txt` in dependency order. |
+| FMM3D checkout/source, `fortran/fmm3d_wasm_sources.txt`, fort2c command/patch, `native/fmm3d_c.h`, or FMM compile flags | Run `make wasm`; its cache stamp rebuilds `libfmm3d-wasm.a` automatically. Use `FMM3D_REBUILD=1 make wasm` to rule out a suspect cache. |
 | `patches/lfortran-c-backend.patch` or `scripts/build-lfortran.sh` | Run `scripts/build-lfortran.sh "$HOME/lfortran"` first, then `make wasm`. If the pinned LFortran commit changed, update the LFortran checkout to the commit recorded by that script before rebuilding. |
 | `package.json` or `package-lock.json` | Run `npm ci`, followed by `npm test` and `npm run build`. |
 | Native fixtures or numerical reference values | Regenerate them only through the documented native parity workflow, review the numerical change, then run the full parity gate. Do not update a fixture merely to make a failing test pass. |
@@ -430,19 +526,27 @@ make parity
 
 ## Toolchain acknowledgements
 
-This port depends directly on [LFortran](https://github.com/lfortran/lfortran)
-and [Emscripten](https://emscripten.org/). LFortran compiles the real Fortran
-dependency closure to C; Emscripten compiles and links that generated C, the
-LFortran runtime, the production geometry C, and the explicit ABI/layout shims
-into `solver.wasm` and its JavaScript loader.
+This port depends directly on [LFortran](https://github.com/lfortran/lfortran),
+[Emscripten](https://emscripten.org/),
+[fort2c](https://github.com/magland/fort2c), and
+[FMM3D](https://github.com/flatironinstitute/FMM3D). LFortran compiles the real
+qotential/geometry-side Fortran dependency closure to C. fort2c translates the
+serial FMM3D Common and Laplace closure. Emscripten compiles and links both C
+families, the LFortran runtime, the production geometry C, and the explicit
+ABI/layout shims into one `solver.wasm` and its JavaScript loader. FMM3D and
+fort2c are Apache-2.0 projects; distribution notices belong in
+`public/THIRD_PARTY_NOTICES.txt`.
 
 This is intentionally not described as an ordinary stock-LFortran command.
 The native LFortran target uses the separate `../../Makefile.lfortran`. The
 browser target pins a specific LFortran source commit and applies the checked
 `patches/lfortran-c-backend.patch` through `scripts/build-lfortran.sh` before
-`scripts/build-wasm.sh` invokes the C backend. The dedicated sections below
-record why the native and browser compilations are separate and how Emscripten
-crosses the row-major descriptor and BLAS/LAPACK boundaries.
+`scripts/build-wasm.sh` invokes the C backend. It independently pins and
+patches fort2c, accepts FMM3D 2.0 or newer, records the exact FMM3D revision,
+and crosses the row-major LFortran/column-major FMM3D boundary through a tested
+C adapter. The dedicated sections below record why the native and browser
+compilations are separate and how Emscripten crosses the array-layout and
+BLAS/LAPACK boundaries.
 
 ## Purpose
 
@@ -455,10 +559,11 @@ increments:
 2. **Web endpoint:** retain the verified geometry page produced from the
    existing production geometry C and extend it with the final solver-data
    contract and field renderer. The earlier W7-X geometry endpoint remains
-   useful validation evidence; the active solver page uses the built-in
-   stellarator.
-3. **Bridge:** connect the real Fortran direct evaluation and RRQ close
-   correction to that page through LFortran-generated C and Emscripten.
+   useful validation evidence; the active solver page now supports both the
+   built-in stellarator and W7-X.
+3. **Bridge:** connect the real Fortran far-field evaluation—FMM3D by default,
+   with Direct retained as a reference—and RRQ close correction to that page
+   through generated C and Emscripten.
 
 The final authority is always the existing Fortran numerical implementation.
 TypeScript and WebGPU may transport and display its results; they must not
@@ -480,14 +585,19 @@ at runtime:
 - for W7-X, a user-supplied positive `restol` (page default `1e-1`); the
   curvature criterion runs at the selected solve order, the chart cap is
   `200,000`, and exceeding it returns a clean error instead of truncating;
+- selected far-field kernel `FMM` or `Direct` (page default: `FMM`); FMM
+  accepts exactly `1e-3`, `1e-6`, `1e-9`, `1e-12`, or `1e-15` (page default:
+  `1e-3`), while Direct explicitly ignores that selection;
 - a source count whose 64-by-`nsrc` direct block would exceed the allocator's
   512 MiB single-request threshold is rejected with public status `215` before
   the large source and direct-work arrays are allocated (the preflight runs
   after geometry fixes `ntri`/`nsrc`, so Gauss/Vioreanu and chart data are
-  already allocated); this guards that one known abort, not total browser memory;
+  already allocated); this guard applies only to Direct, while the FMM layout
+  adapter separately overflow-checks its O(N) interleaving buffers;
 - `isimd=0`, `ichart=1`, adaptive far-field refinement disabled;
-- the existing Fortran `lap3dsdlpmat_r64` evaluated in target blocks replaces
-  the FMM3D call;
+- the FMM path calls the real serial `lfmm3d_t_cd_p` Common/Laplace closure;
+- the Direct path calls the existing Fortran `lap3dsdlpmat_r64` in target
+  blocks;
 - the existing `rrq_r64` path supplies the close correction;
 - calculation runs in a Web Worker after a page button is pressed; and
 - the selected surface is colored by
@@ -496,7 +606,7 @@ at runtime:
 The page also reports the maximum GRF relative error, source-node and render-face
 counts, and total browser execution time. Progress text identifies runtime
 loading, the atomic solve, and render preparation without pretending that the
-adapter state transitions are separately timed numerical phases. FMM3D, SIMD,
+adapter state transitions are separately timed numerical phases. SIMD,
 pthreads, and WebGPU compute remain later optimizations.
 
 While the atomic WASM call is running, the same button becomes **Cancel solve**.
@@ -516,24 +626,29 @@ The shared core preserves the selected-order setup in `stellarator_grf.f90`:
 - `ub=f_harm(sx)` and `ubn=snx dot gradf_harm(sx)` use the functions moved
   from the existing example without changing their formulas.
 
-For consecutive target blocks of 64 nodes (or the remaining tail), call the
-existing `lap3dsdlpmat_r64` over every source node and accumulate
+For FMM, form the same charge and dipole densities as the native example and
+call `lfmm3d_t_cd_p` with sources also used as targets. FMM3D supplies the
+`1/(4*pi)`-normalized charge-plus-dipole far field and its existing self-term
+convention. For Direct, use consecutive target blocks of 64 nodes (or the
+remaining tail), call the existing `lap3dsdlpmat_r64` over every source node,
+and accumulate
 
 ```text
 u(i) = sum_j(As(i,j)*ubn(j) - Ad(i,j)*ub(j)).
 ```
 
-The kernel's coincident-pair zero is retained. Then run the same panel-neighbor
-selection and `rrq_r64` correction as the native example, adding
+The Direct kernel's coincident-pair zero is retained. Both choices then run the
+same panel-neighbor selection and `rrq_r64` correction as the native example,
+adding
 
 ```text
 (S-RawSLP)*ubn - (K-RawDLP)*ub
 ```
 
-for each close target. No full `N x N` matrix is retained. The native direct
-reference and WASM build must use the same target block size and summation
-order for their strict parity test. Changing the block size later is a
-separately measured optimization because it may change roundoff.
+for each close target. No full `N x N` matrix is retained. The native Direct
+reference and WASM Direct build use the same target block size and summation
+order for their strict parity test. FMM is checked against Direct independently
+in native and WASM builds; RRQ is identical in both paths.
 
 The returned point field is
 `log10(max(abs(u(i))/maxval(abs(ubn)), 1e-16))`; the reported scalar GRF error
@@ -550,7 +665,10 @@ The parameterized scalar browser case now crosses the entire pipeline:
 
 ```text
 shared real Fortran core
-    -> patched LFortran C backend (72,213 generated C lines)
+    -> patched LFortran C backend
+FMM3D Common + Laplace closure
+    -> pinned and patched fort2c
+both generated-C families
     -> explicit descriptor/layout and scalar BLAS adapters
     -> Emscripten solver.wasm
     -> atomic Web Worker API
@@ -558,7 +676,7 @@ shared real Fortran core
     -> interactive WebGPU stellarator rendering
 ```
 
-The frozen native fixtures use `mp=12`, `np=36`:
+The frozen Direct native fixtures use `mp=12`, `np=36`:
 
 | surface | order | restol | panels | source nodes | native GRF error | fixture SHA-256 |
 |---|---:|---:|---:|---:|---:|---|
@@ -579,16 +697,19 @@ trade-off at `mp=12`, `np=36`, mesh criterion at the solve order:
 The `3e-1` row is why the default is `1e-1`: one refinement decade separates
 an unresolved geometry from a meaningful error field.
 
-The Node gate compares order-4 geometry, normals, weights, boundary data,
+The Node gate compares Direct order-4 geometry, normals, weights, boundary data,
 render lattice, topology, field, and GRF values against native truth with
 field-specific tolerances and deterministic hashes. The order-6 and W7-X
-smoke/parity gates check GRF, exact topology, render positions, and aggregate
-render-log metrics (the W7-X gate also pins the signed-mean log signature and
-runs the surface/restol ABI rejections). This is tolerance parity, not bitwise native/WASM parity; native
-fixture generation itself must remain bit-for-bit repeatable. The order-6
-fixture records current coarse-grid behavior and is not a convergence claim.
-An independently built `-O1 -fsanitize=address` module also runs the full case
-without an AddressSanitizer report.
+smoke/parity gates also exercise FMM. They require exact topology, finite
+fields, and an FMM-versus-Direct difference bounded by the selected FMM
+tolerance in each toolchain. Cross-toolchain FMM validation compares the FMM
+increment relative to each toolchain's own Direct result, so an existing
+LFortran/gfortran close-evaluation baseline difference is not falsely
+attributed to FMM3D. This is tolerance parity, not bitwise native/WASM parity;
+native fixture generation itself must remain bit-for-bit repeatable. The
+order-6 fixture records current coarse-grid behavior and is not a convergence
+claim. An independently built `-O1 -fsanitize=address` module also exercises
+the integrated module.
 
 ## Non-negotiable source rule
 
@@ -596,9 +717,9 @@ The browser solver must be produced from the real Fortran source graph:
 
 ```text
 existing Fortran solver and dependencies
-    -> portable source fixes where LFortran exposes incompatibilities
-    -> LFortran C backend
-    -> generated C
+    -> portable source fixes where the selected translator exposes incompatibilities
+    -> LFortran C backend for qotential and fort2c for FMM3D
+    -> generated C plus the explicit layout adapter
     -> Emscripten and required numerical libraries
     -> solver.wasm
 ```
@@ -621,12 +742,13 @@ program as a thin command-line driver, and make both the native executable and
 routine, in turn, continues to call the existing qotential,
 QuatApproximation, LineQuaaadrature, geometry, RRQ, and BLAS/LAPACK routines.
 
-For the approved small browser case, replacing the far-field FMM3D call with a
-blocked use of the existing Fortran `lap3dsdlpmat_r64` is intentional, not a
-second solver implementation. The direct path uses the same SLP/DLP kernels,
-density, quadrature weights, self-term convention, and RRQ correction. It must
-also be available in the native fixture build so that native and WASM execute
-the same orchestration.
+The first approved small browser case replaced the far-field FMM3D call with a
+blocked use of the existing Fortran `lap3dsdlpmat_r64`. That Direct path remains
+an intentional reference implementation, not a second mathematical solver. The
+current default path links the real serial FMM3D Common/Laplace closure, and
+both paths use the same density construction, quadrature weights, self-term
+meaning, and RRQ correction. Direct remains available in native and WASM builds
+so the FMM contribution can be tested without conflating compiler baselines.
 
 The following do **not** satisfy the design:
 
@@ -653,14 +775,14 @@ separates those risks:
 - Endpoint B proves the real W7-X geometry generation, browser memory transfer,
   static page build, and native/WASM geometry parity independently of the
   solver compiler work. That earlier endpoint remains validation evidence; the
-  current integrated page renders the built-in stellarator returned by the
-  solver.
+  current integrated page can select the built-in stellarator or W7-X.
 - Each bridge stage replaces exactly one temporary boundary while both ends
   remain runnable.
 
 Earlier fake-sphere scaffolding is not part of the approved executable path.
 The checked W7-X geometry implementation was the earlier browser data source;
-the active solver ABI now selects the built-in stellarator.
+the active solver ABI now selects either supported surface and computes its
+field on demand.
 
 ## Endpoint A: real solver under LFortran
 
@@ -758,7 +880,7 @@ endpoint established the user-facing requirements:
 This endpoint established that a clean Emscripten build could be deployed to a
 static HTTPS host such as GitHub Pages and used interactively without a custom
 domain. The current page has moved beyond this bridge: its button executes
-`solver.wasm` and displays the built-in stellarator field.
+`solver.wasm` and displays the selected built-in or W7-X field.
 
 ## Stable data contract
 
@@ -828,19 +950,20 @@ full-surface solve is attempted.
 Move the actual full-surface dependency closure into the supported WASM build.
 The delivered interface accepts positive runtime `mp` and `np` and even orders
 4 through 16, with `isimd=0`, `ichart=1`, and adaptive refinement disabled.
-The shared core uses blocked calls to the existing scalar
-`lap3dsdlpmat_r64` for global direct evaluation and the existing `rrq_r64` for
-close correction.
+The shared core selects the serial FMM3D Common/Laplace closure or blocked
+calls to the existing scalar `lap3dsdlpmat_r64` for far-field evaluation, then
+uses the existing `rrq_r64` for close correction.
 
 The browser gate is complete only when clicking **Run solver** starts the Web
 Worker, runs the selected case on the fly, returns the built-in stellarator
-mesh and residual, colors the surface by `log10(error)`, and reports the
+or W7-X mesh and residual, colors the surface by `log10(error)`, and reports the
 numerical/timing summary. Repeated-call parity and stable post-warmup memory are
 checked in Node.
 
-FMM3D, SIMD, production-resolution grids, and parallel WASM remain outside this
-gate. Order 6 has a native fixture and WASM smoke/parity gate. Orders 8 through
-16 are selectable experiments until equivalent regression evidence is added.
+FMM3D is now the default far-field choice and Direct remains selectable. SIMD,
+production-resolution grids, and parallel WASM remain outside this gate. Order
+6 has native and WASM smoke/parity coverage. Orders 8 through 16 are selectable
+experiments until equivalent regression evidence is added.
 
 ## WASM build and numerical libraries
 
@@ -849,7 +972,10 @@ The supported browser build is:
 ```text
 Fortran sources listed in fortran/wasm_sources.txt
     -> LFortran C backend
-    -> generated C plus thin ABI support
+FMM3D sources listed in fortran/fmm3d_wasm_sources.txt
+    -> pinned, patched fort2c
+    -> cached libfmm3d-wasm.a
+both paths plus thin ABI/layout support
     -> Emscripten
     -> public/wasm/solver.wasm and loader
 ```
@@ -891,6 +1017,7 @@ For a rank-2 `A(n1,n2)` with one-based indices, the generated-C side uses
 |---|---|
 | generated core ↔ production geometry C | wrapper transposes all rank-2 inputs and outputs, including `Dgl`, `uvs`, `sx`, `snx`, `rts`, `rps`, `uvbd`, and chart outputs |
 | generated core ↔ scalar BLAS/LAPACK | shims interpret the exact layout and transpose flags emitted by LFortran; focused non-square tests prove every operand and result |
+| generated core ↔ fort2c FMM3D | adapter validates LFortran descriptors and interleaves planar `source(3,N)`, `target(3,M)`, and `dipvec(3,N)` into Fortran column-major storage; equal dimensions alone never imply source/target aliasing |
 | WASM ↔ worker | checked flat copy functions publish documented interleaved positions and triangle indices; solver arrays remain 64-bit until the renderer creates its display copy |
 
 No adapter may infer layout from a square or symmetric test matrix. Each gate
@@ -925,18 +1052,20 @@ retain JavaScript views across possible WASM memory growth. The worker should
 copy final results into transferable buffers and send one versioned response to
 the main thread.
 
-Every request carries an identifier, module URL, validated `mp` and `np`, and a
-validated even order. Every response carries the request identifier and either
-progress, one completed dataset, or a structured error.
+Every request carries an identifier, module URL, validated `mp` and `np`, a
+validated even order, selected surface/restol, selected kernel, and one of the
+five supported FMM tolerances. Every response carries the request identifier
+and either progress, one completed dataset, or a structured error.
 
-JavaScript calls `_solver_run(mp,np,order)`, then queries result sizes and copies
-positions, connectivity, `u`, `ubn`, and log-error through checked flat-buffer
-functions. A thin handwritten C adapter unpacks LFortran descriptors, but it
-contains no solver mathematics. It returns nonzero status codes for allocation,
-dimension, or solver failures. The Worker reports one total elapsed time rather
-than pretending that the adapter's internal state transitions are separately
-timed numerical stages; the WASM build does not depend on OpenMP or native
-`cpu_time`/`system_clock` behavior.
+JavaScript calls `_solver_run(mp,np,order,surface,restol,kernel,fmmTolerance,...)`
+with the caller-owned simplex-precomputation buffers, then queries result sizes
+and copies positions, connectivity, `u`, `ubn`, and log-error through checked
+flat-buffer functions. Thin handwritten C adapters unpack LFortran descriptors
+and cross external array-layout boundaries, but contain no solver mathematics.
+They return nonzero status codes for allocation, dimension, FMM, or solver
+failures. The Worker reports total elapsed time plus truthful stage events; the
+WASM build does not depend on OpenMP or native `cpu_time`/`system_clock`
+behavior.
 
 The solve is one synchronous WASM call. Cancellation therefore terminates the
 dedicated Worker, discards its private WASM memory, and creates a fresh Worker
@@ -956,6 +1085,9 @@ Correctness progresses through paired gates:
 | Solver slice | native Fortran | browser WASM | all returned fields and status codes |
 | Scalar full solve, order 4 | native direct case (`12x36`) | browser WASM | all stored fields, mesh, log-error, GRF, hashes, repeat |
 | Scalar smoke/parity, order 6 | native direct case (`12x36`) | browser WASM | GRF, topology, render positions, aggregate log-error metrics |
+| FMM translation | native Clang direct reference | fort2c closure under native Clang and Emscripten | finite charge-plus-dipole result, `1/(4*pi)` normalization, layout negative control |
+| Integrated FMM | native and WASM Direct | native and WASM FMM | exact topology; each FMM-Direct difference and the cross-toolchain FMM increment remain within the selected tolerance envelope |
+| FMM lifecycle | repeated calls in one WASM module | post-warmup memory samples | stable memory, deterministic status/result, no silent fallback to Direct |
 
 Each field must have explicit absolute and relative tolerances. Rendering images
 are not numerical evidence. Renderer tests verify finite GPU buffers, expected
@@ -988,11 +1120,14 @@ single-threaded static build works.
 5. **Real solver slice:** one existing RRQ/close-panel path runs in WASM with
    native parity.
 6. **Real scalar executable:** the button runs runtime `mp`, `np`, and selected
-   even order through a Web Worker, using the direct Fortran kernel plus RRQ,
-   and displays the built-in stellarator `log10(error)` field. Order 4 has full
+   even order through a Web Worker, using the Direct Fortran kernel plus RRQ,
+   and displays the selected surface's `log10(error)` field. Order 4 has full
    native parity and order 6 has a smoke/parity fixture.
-7. **Measured optimization:** only after profiling, evaluate larger grids,
-   FMM3D, SIMD, higher orders, pthreads, or a parity-checked WebGPU kernel.
+7. **Serial FMM3D far field:** the same executable defaults to the real FMM3D
+   Common/Laplace closure translated by fort2c, retains Direct as a runtime
+   reference, and exposes the five validated FMM tolerances.
+8. **Measured optimization:** only after profiling, evaluate larger grids,
+   SIMD, higher orders, pthreads, or a parity-checked WebGPU kernel.
 
 ## Definition of done
 
@@ -1001,6 +1136,9 @@ single-threaded static build works.
 - The native direct executable and browser WASM agree for the frozen order-4
   `mp=12`, `np=36`, `isimd=0` case, including repeated calls in one module; the
   frozen order-6 case passes its documented smoke/parity checks.
+- The FMM3D Common/Laplace closure passes its native-Clang and Emscripten
+  translation probes, and integrated FMM-versus-Direct gates cover the
+  documented built-in and W7-X cases without changing RRQ.
 - The production page contains no TypeScript or WGSL reimplementation of the
   qotential solver.
 - Clicking the page button runs the solver without blocking interaction and

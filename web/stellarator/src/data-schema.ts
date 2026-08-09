@@ -16,6 +16,13 @@ export type SolverOrder = (typeof SUPPORTED_ORDERS)[number];
 export const SUPPORTED_SURFACES = ['builtin', 'w7x'] as const;
 export type SolverSurface = (typeof SUPPORTED_SURFACES)[number];
 
+export const SUPPORTED_KERNELS = ['fmm', 'direct'] as const;
+export type SolverKernel = (typeof SUPPORTED_KERNELS)[number];
+
+export const SUPPORTED_FMM_TOLERANCES =
+  [1e-3, 1e-6, 1e-9, 1e-12, 1e-15] as const;
+export type FmmTolerance = (typeof SUPPORTED_FMM_TOLERANCES)[number];
+
 export type WorkerRequest = {
   type: 'run';
   requestId: number;
@@ -25,6 +32,8 @@ export type WorkerRequest = {
   order: SolverOrder;
   surface: SolverSurface;
   restol: number;
+  kernel: SolverKernel;
+  fmmTolerance: FmmTolerance;
 };
 
 export type WorkerResponse =
@@ -73,6 +82,22 @@ export function validateRestol(restol: number): number {
     'restol must be a positive finite number',
   );
   return restol;
+}
+
+export function validateKernel(kernel: string): SolverKernel {
+  requireCondition(
+    SUPPORTED_KERNELS.includes(kernel as SolverKernel),
+    `kernel must be one of ${SUPPORTED_KERNELS.join(', ')}`,
+  );
+  return kernel as SolverKernel;
+}
+
+export function validateFmmTolerance(tolerance: number): FmmTolerance {
+  requireCondition(
+    SUPPORTED_FMM_TOLERANCES.includes(tolerance as FmmTolerance),
+    `FMM tolerance must be one of ${SUPPORTED_FMM_TOLERANCES.join(', ')}`,
+  );
+  return tolerance as FmmTolerance;
 }
 
 export function validateSolverDataset(data: SolverDataset): SolverDataset {

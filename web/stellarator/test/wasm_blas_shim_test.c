@@ -116,6 +116,17 @@ static void test_dgemm_padded_descriptors(void)
             "padded dgemm overwrote columns outside logical C");
 }
 
+static void test_dgemm_beta_zero_does_not_read_c(void)
+{
+    double a_data[1] = {2.0}, b_data[1] = {3.0}, c_data[1] = {NAN};
+    struct r64 a = r64_matrix(a_data, 1, 1);
+    struct r64 b = r64_matrix(b_data, 1, 1);
+    struct r64 c = r64_matrix(c_data, 1, 1);
+    biesolver_dgemm("N", "N", 1, 1, 1, 1.0, &a, 1, &b, 1,
+                    0.0, &c, 1);
+    require(c_data[0] == 6.0, "dgemm beta=0 read NaN from C");
+}
+
 static void test_zgemm_tn(void)
 {
     double _Complex a_data[6] = {
@@ -150,6 +161,20 @@ static void test_zgemm_tn(void)
             "strided zgemm overwrote an adjacent slice");
 }
 
+static void test_zgemm_beta_zero_does_not_read_c(void)
+{
+    double _Complex a_data[1] = {2.0+I};
+    double _Complex b_data[1] = {3.0-I};
+    double _Complex c_data[1] = {NAN+NAN*I};
+    struct c64 a = c64_matrix(a_data, 1, 1);
+    struct c64 b = c64_matrix(b_data, 1, 1);
+    struct c64 c = c64_matrix(c_data, 1, 1);
+    biesolver_zgemm("N", "N", 1, 1, 1, 1.0, &a, 1, &b, 1,
+                    0.0, &c, 1);
+    require(close_complex(c_data[0], 7.0+I),
+            "zgemm beta=0 read NaN from C");
+}
+
 static void test_dgesv_two_rhs(void)
 {
     double a_data[9] = {3,1,-1, 2,4,1, -1,2,5};
@@ -172,7 +197,9 @@ static void run_numeric_tests(void)
 {
     test_dgemm_nn();
     test_dgemm_padded_descriptors();
+    test_dgemm_beta_zero_does_not_read_c();
     test_zgemm_tn();
+    test_zgemm_beta_zero_does_not_read_c();
     test_dgesv_two_rhs();
 }
 

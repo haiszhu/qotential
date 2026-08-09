@@ -21,6 +21,8 @@ WEB_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 : "${BASELINE_DIR:?set BASELINE_DIR to the baseline directory}"
 : "${LF:?set LF to the patched LFortran executable}"
 EMCC=${EMCC:-emcc}
+FORT2C=${FORT2C:-fort2c}
+FMM3D_SRC=${FMM3D_SRC:-$HOME/git/FMM3D}
 
 # Every value the build depends on, stated rather than inherited.
 export WASM_PROGRESS=0
@@ -29,10 +31,11 @@ export WASM_DEBUG=
 export WASM_SANITIZE=
 export LF_ARRAY_BOUNDS_CHECK=0
 export WASM_ALLOC_TRACE=0
-export WASM_STACK_SIZE=4194304
+export WASM_STACK_SIZE=67108864
 
 GENERATED_C="$WEB_ROOT/build-wasm/stellarator_solver.c"
 WASM_BIN="$WEB_ROOT/public/wasm/solver.wasm"
+FMM_ARCHIVE="$WEB_ROOT/build-fmm3d/libfmm3d-wasm.a"
 
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/stellarator-byte-identity.XXXXXX")
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -42,6 +45,12 @@ write_manifest() {
   {
     echo "LF_PATH=$(command -v "$LF")"
     echo "EMCC_PATH=$(command -v "$EMCC")"
+    echo "FORT2C_PATH=$(command -v "$FORT2C")"
+    echo "FMM3D_COMMIT=$(git -C "$FMM3D_SRC" rev-parse HEAD)"
+    echo "FMM3D_DESCRIBE=$(git -C "$FMM3D_SRC" describe --tags --always --dirty)"
+    echo "FORT2C_VERSION=$("$FORT2C" --version)"
+    echo "FORT2C_PATCH_SHA256=$(shasum -a 256 "$WEB_ROOT/patches/fort2c-allocate-stat.patch" | awk '{print $1}')"
+    echo "FMM_ARCHIVE_SHA256=$(shasum -a 256 "$FMM_ARCHIVE" | awk '{print $1}')"
     echo "WASM_PROGRESS=$WASM_PROGRESS"
     echo "WASM_OPT=$WASM_OPT"
     echo "WASM_DEBUG=$WASM_DEBUG"
@@ -66,6 +75,12 @@ build() {
   test -s "$WASM_BIN"
 }
 
+ensure_fmm_archive() {
+  FMM3D_SRC="$FMM3D_SRC" FORT2C="$FORT2C" EMCC="$EMCC" \
+    "$WEB_ROOT/scripts/build-fmm3d-wasm.sh" >/dev/null
+  test -s "$FMM_ARCHIVE"
+}
+
 if [[ $MODE == capture ]]; then
   if [[ -e $BASELINE_DIR ]]; then
     echo "refusing to overwrite existing baseline: $BASELINE_DIR" >&2
@@ -85,6 +100,7 @@ test -f "$BASELINE_DIR/manifest.txt" ||
   { echo "no baseline manifest in $BASELINE_DIR" >&2; exit 1; }
 
 # Toolchain first: a flag or compiler mismatch must not look like leaked code.
+ensure_fmm_archive
 write_manifest "$TMP_DIR/manifest.txt"
 if ! cmp -s "$TMP_DIR/manifest.txt" "$BASELINE_DIR/manifest.txt"; then
   echo "toolchain/flag manifest differs from baseline:" >&2

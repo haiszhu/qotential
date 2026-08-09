@@ -7,12 +7,13 @@ QOTENTIAL_DIR=$(cd "$WEB_ROOT/../.." && pwd)
 LF=${LF:-lfortran}
 EMCC=${EMCC:-emcc}
 LLVM_NM=${LLVM_NM:-llvm-nm}
+EMAR=${EMAR:-emar}
 WASM_OPT=${WASM_OPT:--O2}
 WASM_DEBUG=${WASM_DEBUG:-}
 WASM_ALLOC_TRACE=${WASM_ALLOC_TRACE:-0}
 LF_ARRAY_BOUNDS_CHECK=${LF_ARRAY_BOUNDS_CHECK:-0}
 WASM_SANITIZE=${WASM_SANITIZE:-}
-WASM_STACK_SIZE=${WASM_STACK_SIZE:-4194304}
+WASM_STACK_SIZE=${WASM_STACK_SIZE:-67108864}
 WASM_PROGRESS=${WASM_PROGRESS:-1}
 if [[ $WASM_PROGRESS != 0 && $WASM_PROGRESS != 1 ]]; then
   echo "WASM_PROGRESS must be 0 or 1 (got '$WASM_PROGRESS')" >&2
@@ -48,6 +49,7 @@ CPP_FLAGS=(
   -D BIESOLVER_R64_ONLY
   -D BIESOLVER_STELLARATOR_BUILD
   -D BIESOLVER_WASM_SCALAR_ONLY
+  -D BIESOLVER_WASM_FMM3D
   -D BIESOLVER_C_BACKEND_ROW_MAJOR
 )
 if [[ $LF_ARRAY_BOUNDS_CHECK == 0 ]]; then
@@ -91,6 +93,14 @@ fi
 # '../../../../opt/homebrew/Cellar/emscripten/.../gl.c'".  Any real path works;
 # `em-config CACHE` reports Emscripten's own default if you prefer that.
 export EM_CACHE=${EM_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/biesolver-emscripten}
+FMM3D_CFLAGS_EXTRA=
+if [[ -n $WASM_SANITIZE ]]; then
+  FMM3D_CFLAGS_EXTRA="-fsanitize=$WASM_SANITIZE"
+fi
+FMM3D_SRC="${FMM3D_SRC:-$HOME/git/FMM3D}" FORT2C="${FORT2C:-fort2c}" \
+  EMCC="$EMCC" EMAR="$EMAR" \
+  FMM3D_CFLAGS_EXTRA="$FMM3D_CFLAGS_EXTRA" \
+  "$WEB_ROOT/scripts/build-fmm3d-wasm.sh"
 SOLVER_CC_FLAGS=(
   -DBIESOLVER_GENERATED_SOLVER=1
   -include "$WEB_ROOT/native/wasm_lfortran_alloc.h"
@@ -108,9 +118,29 @@ fi
 test -s "$BUILD_DIR/stellarator_solver.o"
 
 undef=$($LLVM_NM -u "$BUILD_DIR/stellarator_solver.o")
-if grep -Ei 'lq_csimd|csimd|lfmm3d|omp_get_|__kmpc|GOMP_|cpu_time|system_clock' \
+adapter_count=$(grep -Ec '(^|[[:space:]])biesolver_lfmm3d_t_cd_p_rowmajor$' \
+  <<<"$undef" || true)
+raw_fmm_count=$(grep -Ec '(^|[[:space:]])lfmm3d_t_cd_p_$' <<<"$undef" || true)
+if [[ $adapter_count != 1 || $raw_fmm_count != 0 ]]; then
+  echo "generated solver must reference only the FMM3D row-major adapter" >&2
+  exit 1
+fi
+if grep -Ei 'lq_csimd|csimd|omp_get_|__kmpc|GOMP_|cpu_time|system_clock' \
      <<<"$undef"; then
   echo "forbidden scalar-build dependency remains" >&2
+  exit 1
+fi
+
+"$EMCC" "$WASM_OPT" "$WASM_DEBUG" "$PATH_MAP" -std=c11 -ffp-contract=off \
+  "${SANITIZER_FLAGS[@]}" -I"$WEB_ROOT/native" \
+  -c "$WEB_ROOT/native/fmm3d_layout_adapter.c" \
+  -o "$BUILD_DIR/fmm3d_layout_adapter.o"
+test -s "$BUILD_DIR/fmm3d_layout_adapter.o"
+adapter_undef=$($LLVM_NM -u "$BUILD_DIR/fmm3d_layout_adapter.o")
+adapter_raw_count=$(grep -Ec '(^|[[:space:]])lfmm3d_t_cd_p_$' \
+  <<<"$adapter_undef" || true)
+if [[ $adapter_raw_count != 1 ]]; then
+  echo "FMM3D layout adapter must reference the canonical raw FMM symbol" >&2
   exit 1
 fi
 
@@ -144,12 +174,14 @@ EXPORTED="['_solver_simplex_precomp','_solver_run','_solver_result_nsrc','_solve
   "$BUILD_DIR/stellarator_solver.o" \
   "$BUILD_DIR/lfortran_intrinsics.o" \
   "$BUILD_DIR/wasm_lfortran_alloc.o" \
+  "$BUILD_DIR/fmm3d_layout_adapter.o" \
   ${PROGRESS_LINK_OBJS[@]+"${PROGRESS_LINK_OBJS[@]}"} \
   "$QOTENTIAL_DIR/utils/stellarator_geo_mex.c" \
   "$WEB_ROOT/native/geometry_layout_adapter.c" \
   "$WEB_ROOT/native/wasm_blas_shim.c" \
   "$WEB_ROOT/native/wasm_memory_preflight.c" \
   "$WEB_ROOT/native/wasm_api_adapter.c" \
+  "$WEB_ROOT/build-fmm3d/libfmm3d-wasm.a" \
   -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createSolver \
   -sWASM_BIGINT=1 -sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=web,worker,node \
   -sSTACK_SIZE="$WASM_STACK_SIZE" \

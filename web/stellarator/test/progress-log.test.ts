@@ -45,6 +45,22 @@ describe('formatProgressEvent', () => {
     expect(event.alwaysForward).toBe(false);
   });
 
+  it('formats FMM begin and one real-time completion event', () => {
+    const begin = formatProgressEvent(3, 0n, 1n, 1n, 0n, 0)!;
+    const complete = formatProgressEvent(4, 1n, 1n, 1n, 0n, 0.125)!;
+    expect(begin.line).toMatch(/\[fmm\].*Laplace GRF/i);
+    expect(complete.line).toMatch(/\[fmm\].*completed.*0\.125 s/i);
+    expect(begin.stageKey).toBe('fmm');
+    expect(complete.stageKey).toBe('fmm');
+    expect(begin.alwaysForward).toBe(true);
+    expect(complete.alwaysForward).toBe(true);
+  });
+
+  it('ignores unknown far-field kernel payloads', () => {
+    expect(formatProgressEvent(3, 0n, 1n, 2n, 0n, 0)).toBeUndefined();
+    expect(formatProgressEvent(4, 1n, 1n, -1n, 0n, 0)).toBeUndefined();
+  });
+
   it('marks a 100-percent close-count milestone as always forwarded', () => {
     const event = formatProgressEvent(6, 5_500n, 5_500n, 0n, 0n, NO_VALUE)!;
     expect(event.line).toBe('[close/count] 100%  patch 5,500 / 5,500');

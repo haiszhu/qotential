@@ -11,6 +11,7 @@ const fixturePath = process.env.WASM_FIXTURE ||
   path.join(webRoot, 'fixtures/native/order4-direct.bin');
 const order6FixturePath = path.join(webRoot, 'fixtures/native/order6-direct.bin');
 const w7xFixturePath = path.join(webRoot, 'fixtures/native/w7x-order6-direct.bin');
+const fmmFixtureDir = process.env.WASM_FMM_FIXTURE_DIR;
 
 if (!fs.statSync(wasmPath).size) throw new Error('empty solver.wasm');
 const { default: createSolver } = await import(moduleUrl);
@@ -62,8 +63,10 @@ function createSimplexPrecomp(order) {
   }
 }
 
-function solverRun(refs, ...args) {
-  return wasm._solver_run(...args, ...refs.pointers);
+function solverRun(refs, mp, np, order, surface, restol,
+                   kernel = 0n, fmmTolerance = 1e-3) {
+  return wasm._solver_run(mp, np, order, surface, restol,
+                          kernel, fmmTolerance, ...refs.pointers);
 }
 
 function parseFixture(filename) {
@@ -92,6 +95,11 @@ function parseFixture(filename) {
     render_triangles: i64(3 * nfaces),
   };
   require(offset === blob.length, 'fixture length mismatch');
+  require(Number.isFinite(grfError), 'fixture GRF error is not finite');
+  for (const [name, values] of Object.entries(fields)) {
+    if (name === 'render_triangles') continue;
+    require(values.every(Number.isFinite), `fixture ${name} contains non-finite values`);
+  }
   return { ntri, nsrc, nrender, nfaces, grfError, fields };
 }
 
@@ -125,7 +133,8 @@ require(solverRun(refs4, 4n, 12n, 5n, 0n, 0.1) === 106,
         'solver must reject an unsupported odd order');
 wasm._solver_clear();
 
-callStage('_solver_run', 12n, 36n, 6n, 0n, 0.1, ...refs6.pointers);
+callStage('_solver_run', 12n, 36n, 6n, 0n, 0.1,
+          0n, 1e-3, ...refs6.pointers);
 const order6Nsrc = Number(wasm._solver_result_nsrc());
 const order6Nrender = Number(wasm._solver_result_nrender());
 const order6Nfaces = Number(wasm._solver_result_ntriangles());
@@ -140,6 +149,11 @@ require(Math.abs(wasm._solver_result_grf_error() - order6Truth.grfError) < 1e-8,
 const order6RenderXyz = copyF64('_solver_copy_render_xyz', 3 * order6Nrender);
 const order6RenderLog = copyF64('_solver_copy_render_log_error', order6Nrender);
 const order6Triangles = copyI64('_solver_copy_render_triangles', 3 * order6Nfaces);
+const order6DirectWasm = {
+  grfError: wasm._solver_result_grf_error(),
+  u: copyF64('_solver_copy_u', order6Nsrc),
+  renderTriangles: order6Triangles,
+};
 require(order6Triangles.every(
   (value, index) => value === order6Truth.fields.render_triangles[index],
 ), 'order 6 render topology differs from native');
@@ -166,7 +180,8 @@ console.log('WASM_ORDER6_SMOKE_OK',
             `renderLogMaxAbs=${order6LogMetric.maxAbs}`);
 wasm._solver_clear();
 
-callStage('_solver_run', 4n, 12n, 4n, 0n, 0.1, ...refs4.pointers);
+callStage('_solver_run', 4n, 12n, 4n, 0n, 0.1,
+          0n, 1e-3, ...refs4.pointers);
 require(Number(wasm._solver_result_nsrc()) === 1360,
         `4x12 source count=${wasm._solver_result_nsrc()}, expected 1360`);
 wasm._solver_clear();
@@ -181,8 +196,10 @@ require(solverRun(refs4, 12n, 36n, 4n, 1n, Number.NaN) === 108,
         'solver must reject a non-finite W7-X restol');
 wasm._solver_clear();
 
+let w7xDirectWasm;
 if (process.env.WASM_SKIP_W7X !== '1') {
-  callStage('_solver_run', 12n, 36n, 6n, 1n, 0.1, ...refs6.pointers);
+  callStage('_solver_run', 12n, 36n, 6n, 1n, 0.1,
+            0n, 1e-3, ...refs6.pointers);
   const w7xNsrc = Number(wasm._solver_result_nsrc());
   const w7xNrender = Number(wasm._solver_result_nrender());
   const w7xNfaces = Number(wasm._solver_result_ntriangles());
@@ -197,6 +214,11 @@ if (process.env.WASM_SKIP_W7X !== '1') {
   const w7xRenderXyz = copyF64('_solver_copy_render_xyz', 3 * w7xNrender);
   const w7xRenderLog = copyF64('_solver_copy_render_log_error', w7xNrender);
   const w7xTriangles = copyI64('_solver_copy_render_triangles', 3 * w7xNfaces);
+  w7xDirectWasm = {
+    grfError: wasm._solver_result_grf_error(),
+    u: copyF64('_solver_copy_u', w7xNsrc),
+    renderTriangles: w7xTriangles,
+  };
   require(w7xTriangles.every(
     (value, index) => value === w7xTruth.fields.render_triangles[index],
   ), 'w7x render topology differs from native');
@@ -252,12 +274,17 @@ function copyI64(name, count) {
 }
 
 function collect() {
+  return collectFixture(truth);
+}
+
+function collectFixture(expected) {
   const nsrc = Number(wasm._solver_result_nsrc());
   const nrender = Number(wasm._solver_result_nrender());
   const nfaces = Number(wasm._solver_result_ntriangles());
-  require(nsrc === truth.nsrc, `nsrc=${nsrc}`);
-  require(nrender === truth.nrender, `nrender=${nrender}`);
-  require(nfaces === truth.nfaces, `nfaces=${nfaces}`);
+  require(nsrc === expected.nsrc, `nsrc=${nsrc}, expected ${expected.nsrc}`);
+  require(nrender === expected.nrender,
+          `nrender=${nrender}, expected ${expected.nrender}`);
+  require(nfaces === expected.nfaces, `nfaces=${nfaces}, expected ${expected.nfaces}`);
   return {
     grfError: wasm._solver_result_grf_error(),
     fields: {
@@ -276,7 +303,8 @@ function collect() {
 
 function runOnce() {
   wasm._solver_clear();
-  callStage('_solver_run', 12n, 36n, 4n, 0n, 0.1, ...refs4.pointers);
+  callStage('_solver_run', 12n, 36n, 4n, 0n, 0.1,
+            0n, 1e-3, ...refs4.pointers);
   return collect();
 }
 
@@ -431,17 +459,114 @@ for (const name of Object.keys(first.fields)) {
           `${name}: repeated WASM run differs`);
 }
 wasm._solver_clear();
-callStage('_solver_run', 12n, 36n, 4n, 0n, 0.1, ...refs4.pointers);
+callStage('_solver_run', 12n, 36n, 4n, 0n, 0.1,
+          0n, 1e-3, ...refs4.pointers);
 const convenience = collect();
 const convenienceMemory = wasm.HEAPU8.buffer.byteLength;
 compareRun('convenience', convenience);
-require(convenienceMemory === secondMemory,
-        `WASM memory still grows after warmup: ${firstMemory}, ${secondMemory}, ${convenienceMemory}`);
+if (process.env.WASM_SKIP_MEMORY_STABILITY !== '1') {
+  require(convenienceMemory === secondMemory,
+          `WASM memory still grows after warmup: ${firstMemory}, ${secondMemory}, ${convenienceMemory}`);
+}
 
 console.log('WASM_PARITY_METRICS', JSON.stringify(firstMetrics));
 console.log('WASM_ORDER4_PARITY_OK', `nsrc=${truth.nsrc}`, `nrender=${truth.nrender}`,
             `grf=${first.grfError}`, `memory=${convenienceMemory}`);
 wasm._solver_clear();
+
+if (fmmFixtureDir) {
+  const order4DirectWasm = {
+    grfError: first.grfError,
+    u: first.fields.u,
+    renderTriangles: first.fields.render_triangles,
+  };
+  const fmmCases = [
+    {
+      label: 'builtin-order4-e3', file: 'builtin-order4-e3.bin',
+      refs: refs4, args: [12n, 36n, 4n, 0n, 0.1, 1n, 1e-3],
+      direct: truth, wasmDirect: order4DirectWasm, eps: 1e-3,
+    },
+    {
+      label: 'builtin-order6-e6', file: 'builtin-order6-e6.bin',
+      refs: refs6, args: [12n, 36n, 6n, 0n, 0.1, 1n, 1e-6],
+      direct: order6Truth, wasmDirect: order6DirectWasm, eps: 1e-6,
+    },
+    {
+      label: 'w7x-order6-e6', file: 'w7x-order6-e6.bin',
+      refs: refs6, args: [12n, 36n, 6n, 1n, 0.1, 1n, 1e-6],
+      direct: w7xTruth, wasmDirect: w7xDirectWasm, eps: 1e-6,
+    },
+  ];
+  for (const testCase of fmmCases) {
+    const nativeFmm = parseFixture(path.join(fmmFixtureDir, testCase.file));
+    const limit = 20 * testCase.eps;
+    require(testCase.wasmDirect,
+      `${testCase.label}: missing WASM Direct control result`);
+    require(nativeFmm.ntri === testCase.direct.ntri &&
+            nativeFmm.nsrc === testCase.direct.nsrc &&
+            nativeFmm.nrender === testCase.direct.nrender &&
+            nativeFmm.nfaces === testCase.direct.nfaces,
+            `${testCase.label}: native FMM topology dimensions differ from Direct`);
+    require(nativeFmm.fields.render_triangles.every(
+      (value, index) => value === testCase.direct.fields.render_triangles[index]),
+    `${testCase.label}: native FMM topology differs from Direct`);
+
+    const nativeDirect = compareFloat(
+      `${testCase.label}.native-direct.u`, nativeFmm.fields.u,
+      testCase.direct.fields.u,
+    );
+    require(nativeDirect.fieldScaled <= limit,
+      `${testCase.label}: native FMM/Direct u error ${nativeDirect.fieldScaled} > ${limit}`);
+    require(Math.abs(nativeFmm.grfError-testCase.direct.grfError) <= limit,
+      `${testCase.label}: native FMM/Direct GRF error exceeds ${limit}`);
+
+    wasm._solver_clear();
+    callStage('_solver_run', ...testCase.args, ...testCase.refs.pointers);
+    const wasmFmm = collectFixture(nativeFmm);
+    require(wasmFmm.fields.render_triangles.every(
+      (value, index) => value === nativeFmm.fields.render_triangles[index]),
+    `${testCase.label}: WASM FMM topology differs from native FMM`);
+    require(wasmFmm.fields.render_triangles.every(
+      (value, index) => value === testCase.wasmDirect.renderTriangles[index]),
+    `${testCase.label}: WASM FMM topology differs from WASM Direct`);
+    for (const [name, values] of Object.entries(wasmFmm.fields)) {
+      if (name === 'render_triangles') continue;
+      require(values.every(Number.isFinite),
+        `${testCase.label}: WASM FMM ${name} contains non-finite values`);
+    }
+    const wasmNativeRaw = compareFloat(
+      `${testCase.label}.wasm-native.u`, wasmFmm.fields.u, nativeFmm.fields.u,
+    );
+    const wasmDirect = compareFloat(
+      `${testCase.label}.wasm-direct.u`, wasmFmm.fields.u,
+      testCase.wasmDirect.u,
+    );
+    require(wasmDirect.fieldScaled <= limit,
+      `${testCase.label}: WASM FMM/Direct u error ${wasmDirect.fieldScaled} > ${limit}`);
+    require(Math.abs(wasmFmm.grfError-testCase.wasmDirect.grfError) <= limit,
+      `${testCase.label}: WASM FMM/Direct GRF error exceeds ${limit}`);
+
+    const nativeEffect = new Float64Array(nativeFmm.nsrc);
+    const wasmEffect = new Float64Array(nativeFmm.nsrc);
+    for (let i = 0; i < nativeFmm.nsrc; ++i) {
+      nativeEffect[i] = nativeFmm.fields.u[i]-testCase.direct.fields.u[i];
+      wasmEffect[i] = wasmFmm.fields.u[i]-testCase.wasmDirect.u[i];
+    }
+    const effectMetric = compareFloat(
+      `${testCase.label}.fmm-effect`, wasmEffect, nativeEffect,
+    );
+    require(effectMetric.fieldScaled <= limit,
+      `${testCase.label}: cross-toolchain FMM effect error ` +
+      `${effectMetric.fieldScaled} > ${limit}`);
+    console.log('WASM_FMM_PARITY_OK', testCase.label,
+                `uNativeDirect=${nativeDirect.fieldScaled}`,
+                `uWasmDirect=${wasmDirect.fieldScaled}`,
+                `effect=${effectMetric.fieldScaled}`,
+                `rawCrossToolchain=${wasmNativeRaw.fieldScaled}`,
+                `grf=${wasmFmm.grfError}`);
+    wasm._solver_clear();
+  }
+}
 
 // --- Progress-event characterization (Task 7) -------------------------------
 // Capture the raw progress events emitted during a real built-in order-4 solve
@@ -462,7 +587,9 @@ function captureProgress(refs, runArgs) {
     });
   };
   try {
-    callStage('_solver_run', ...runArgs, ...refs.pointers);
+    const status = solverRun(refs, ...runArgs);
+    require(status === 0,
+      `_solver_run failed: status=${status} last=${wasm._solver_last_error()}`);
   } finally {
     delete wasm.onSolverProgress;
   }
@@ -508,6 +635,8 @@ require(geometryReady.total === truth.nsrc,
         `geometry-ready nsrc=${geometryReady.total}, expected ${truth.nsrc}`);
 const directBegin = requireOnce(progressEvents, 3);
 const directFinal = requireLongPhase(progressEvents, 4, 'direct');
+require(directBegin.aux0 === 0 && directFinal.aux0 === 0,
+        'Direct progress events must carry kernel id 0');
 const countBegin = requireOnce(progressEvents, 5);
 const countFinal = requireLongPhase(progressEvents, 6, 'close/count');
 const rrqBegin = requireOnce(progressEvents, 7);
@@ -542,6 +671,45 @@ require(result.value === progressGrf,
         `result event value=${result.value} differs from _solver_result_grf_error()=${progressGrf}`);
 require(result.current === progressNsrc,
         `result event current=${result.current}, expected nsrc=${progressNsrc}`);
+wasm._solver_clear();
+
+const fmmProgressEvents = captureProgress(
+  refs4, [12n, 36n, 4n, 0n, 0.1, 1n, 1e-3]);
+const fmmBegin = requireOnce(fmmProgressEvents, 3);
+const fmmComplete = requireOnce(fmmProgressEvents, 4);
+require(fmmBegin.aux0 === 1 && fmmComplete.aux0 === 1,
+        'FMM progress events must carry kernel id 1');
+require(fmmComplete.current === 1 && fmmComplete.total === 1,
+        `FMM completion must be 1/1, got ${fmmComplete.current}/${fmmComplete.total}`);
+require(Number.isFinite(fmmComplete.value) && fmmComplete.value >= 0,
+        `FMM completion time is invalid: ${fmmComplete.value}`);
+const fmmFollowingStages = [5, 6, 7, 8, 9, 10, 11];
+let previousFmmIndex = fmmProgressEvents.indexOf(fmmComplete);
+for (const stage of fmmFollowingStages) {
+  const event = stage === 6 || stage === 8
+    ? requireLongPhase(fmmProgressEvents, stage, `FMM stage ${stage}`)
+    : requireOnce(fmmProgressEvents, stage);
+  const index = fmmProgressEvents.indexOf(event);
+  require(previousFmmIndex < index,
+          `FMM completion must precede stage ${stage}`);
+  previousFmmIndex = index;
+}
+console.log('WASM_FMM_PROGRESS_OK',
+            `events=${fmmProgressEvents.length}`,
+            `seconds=${fmmComplete.value}`);
+wasm._solver_clear();
+
+callStage('_solver_run', 12n, 36n, 4n, 0n, 0.1,
+          1n, 1e-3, ...refs4.pointers);
+const fmmMemoryAfterSecond = wasm.HEAPU8.buffer.byteLength;
+wasm._solver_clear();
+callStage('_solver_run', 12n, 36n, 4n, 0n, 0.1,
+          1n, 1e-3, ...refs4.pointers);
+const fmmMemoryAfterThird = wasm.HEAPU8.buffer.byteLength;
+require(fmmMemoryAfterThird === fmmMemoryAfterSecond,
+  `WASM FMM memory still grows after warmup: ` +
+  `${fmmMemoryAfterSecond}, ${fmmMemoryAfterThird}`);
+console.log('WASM_FMM_MEMORY_OK', `memory=${fmmMemoryAfterThird}`);
 wasm._solver_clear();
 
 // A callback that throws on every event must not alter solver status or results.

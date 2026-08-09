@@ -94,7 +94,9 @@ void biesolver_dgemm(char *ta_flag, char *tb_flag,
                 double bv = tb == 0 ? r64_get(b, q, j) : r64_get(b, j, q);
                 sum += av * bv;
             }
-            r64_set(c, i, j, alpha * sum + beta * r64_get(c, i, j));
+            double value = alpha * sum;
+            if (beta != 0.0) value += beta * r64_get(c, i, j);
+            r64_set(c, i, j, value);
         }
     }
 }
@@ -126,7 +128,10 @@ void biesolver_zgemm(char *ta_flag, char *tb_flag,
                 if (tb == 2) bv = conj(bv);
                 sum += av * bv;
             }
-            c64_set(c, i, j, alpha * sum + beta * c64_get(c, i, j));
+            double _Complex value = alpha * sum;
+            if (creal(beta) != 0.0 || cimag(beta) != 0.0)
+                value += beta * c64_get(c, i, j);
+            c64_set(c, i, j, value);
         }
     }
 }

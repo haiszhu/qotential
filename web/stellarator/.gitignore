@@ -1,4 +1,6 @@
 build-wasm/
+build-fmm3d/
+build-progress-baseline/
 dist/
 node_modules/
 public/wasm/*

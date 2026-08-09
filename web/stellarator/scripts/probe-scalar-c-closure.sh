@@ -36,6 +36,10 @@ BIESOLVER_PROGRESS=${BIESOLVER_PROGRESS:-0}
 if [[ $BIESOLVER_PROGRESS == 1 ]]; then
   CPP_FLAGS+=(-D BIESOLVER_WASM_PROGRESS)
 fi
+BIESOLVER_FMM3D=${BIESOLVER_FMM3D:-0}
+if [[ $BIESOLVER_FMM3D == 1 ]]; then
+  CPP_FLAGS+=(-D BIESOLVER_WASM_FMM3D)
+fi
 NAMES=(
   quatapproximation harmonic koorn_geom qkernel omega tensor_geom
   linequaaadrature adaptive kernel solidangle lap3d
@@ -89,7 +93,7 @@ done
 bad=''
 for object in "$OBJ_DIR"/*.o; do
   matches=$("$LLVM_NM" -u "$object" | \
-    grep -Ei 'lq_csimd|csimd|cpu_time|system_clock|sys_clock|lfmm3d|omp_get_|__kmpc|GOMP_' || true)
+    grep -Ei 'lq_csimd|csimd|cpu_time|system_clock|sys_clock|omp_get_|__kmpc|GOMP_' || true)
   if [[ -n $matches ]]; then
     bad+="$(basename "$object")"$'\n'"$matches"$'\n'
   fi
@@ -100,6 +104,18 @@ if [[ -n $bad ]]; then
 fi
 
 core_undef=$($LLVM_NM -u "$OBJ_DIR/stellarator_grf_core.o")
+adapter_count=$(grep -Ec '(^|[[:space:]])biesolver_lfmm3d_t_cd_p_rowmajor$' \
+  <<<"$core_undef" || true)
+raw_fmm_count=$(grep -Ec '(^|[[:space:]])lfmm3d_t_cd_p_$' <<<"$core_undef" || true)
+if [[ $BIESOLVER_FMM3D == 1 ]]; then
+  if [[ $adapter_count != 1 || $raw_fmm_count != 0 ]]; then
+    echo "stellarator_grf_core.o: scalar+FMM must expose only the row-major adapter" >&2
+    exit 1
+  fi
+elif [[ $adapter_count != 0 || $raw_fmm_count != 0 ]]; then
+  echo "stellarator_grf_core.o: scalar Direct closure unexpectedly references FMM" >&2
+  exit 1
+fi
 preflight_count=$(grep -Ec '(^|[[:space:]])biesolver_wasm_memory_preflight$' <<<"$core_undef" || true)
 if [[ $preflight_count != 1 ]]; then
   echo "stellarator_grf_core.o: expected exactly one undefined biesolver_wasm_memory_preflight, found $preflight_count" >&2
@@ -123,11 +139,11 @@ if [[ $BIESOLVER_PROGRESS == 1 ]]; then
     echo "stellarator_grf_core.o: expected exactly one undefined biesolver_progress, found $progress_count" >&2
     exit 1
   fi
-  echo "SCALAR_C_CLOSURE_OK mode=progress"
+  echo "SCALAR_C_CLOSURE_OK mode=progress fmm=$BIESOLVER_FMM3D"
 else
   if [[ $progress_count != 0 ]]; then
     echo "stellarator_grf_core.o: biesolver_progress must be absent without the macro, found $progress_count" >&2
     exit 1
   fi
-  echo "SCALAR_C_CLOSURE_OK mode=plain"
+  echo "SCALAR_C_CLOSURE_OK mode=plain fmm=$BIESOLVER_FMM3D"
 fi

@@ -106,13 +106,32 @@ export function formatProgressEvent(
         alwaysForward: true,
       };
     case 3:
-      return {
-        line: '[direct] evaluating naive Laplace GRF',
-        stageKey: 'direct',
-        alwaysForward: true,
-      };
+      if (aux0 === 0n) {
+        return {
+          line: '[direct] evaluating naive Laplace GRF',
+          stageKey: 'direct',
+          alwaysForward: true,
+        };
+      }
+      if (aux0 === 1n) {
+        return {
+          line: '[fmm] evaluating Laplace GRF with FMM3D',
+          stageKey: 'fmm',
+          alwaysForward: true,
+        };
+      }
+      return undefined;
     case 4:
-      return progressStage('direct', 'block', current, total);
+      if (aux0 === 0n) return progressStage('direct', 'block', current, total);
+      if (aux0 === 1n) {
+        if (!Number.isFinite(value) || value < 0) return undefined;
+        return {
+          line: `[fmm] completed Laplace GRF in ${value.toFixed(3)} s`,
+          stageKey: 'fmm',
+          alwaysForward: true,
+        };
+      }
+      return undefined;
     case 5:
       return {
         line: '[close/count] finding close targets',

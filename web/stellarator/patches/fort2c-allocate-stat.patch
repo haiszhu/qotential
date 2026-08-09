@@ -1,0 +1,25 @@
+diff --git a/fort2c/transpiler.py b/fort2c/transpiler.py
+--- a/fort2c/transpiler.py
++++ b/fort2c/transpiler.py
+@@ -2324,6 +2324,7 @@ class CGen:
+     def alloc_stmt(self, node):
+         # ALLOCATE(a(dims), b(dims), ..., stat=ierr) -> one malloc per target
+         out = []
++        allocated_ptrs = []
+         for alc in walk(node, f03.Allocation):
+             nm = str(alc.children[0])
+             specs = walk(alc.children[1], f03.Allocate_Shape_Spec)
+@@ -2349,8 +2350,11 @@ class CGen:
+             size = ' * '.join(f'({e})' for e in exts)
+             ctype = sym.ctype
+             out.append(f'{cname(nm)} = ({ctype} *)malloc(({size}) * sizeof({ctype}));')
+-        # stat=ierr : we assume malloc succeeds, so report success (0)
++            allocated_ptrs.append(cname(nm))
++        # A nonzero STAT lets translated callers preserve Fortran's guarded
++        # allocation-failure path instead of dereferencing a null pointer.
+         for opt in walk(node, f03.Alloc_Opt):
+             if str(opt.children[0]).upper() == 'STAT':
+-                out.append(f'{self.lhs(opt.children[1])} = 0;')
++                failed = ' || '.join(f'{ptr} == NULL' for ptr in allocated_ptrs)
++                out.append(f'{self.lhs(opt.children[1])} = ({failed}) ? 1 : 0;')
+         return out

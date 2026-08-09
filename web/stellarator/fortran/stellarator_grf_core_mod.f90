@@ -239,11 +239,20 @@ module stellarator_grf_core_mod
 
 contains
 
-  subroutine stellarator_run_case(cfg, result, status, t_fmm_out, t_close_out, timeinfo_out)
+  subroutine stellarator_run_case(cfg, tgl, wgl, Dgl, w_bclag, Legmat, &
+      umatr, vmatr, result, status, t_fmm_out, t_close_out, timeinfo_out)
   type(stellarator_case_config), intent(in) :: cfg
   type(stellarator_case_result), intent(inout) :: result
   integer(8), intent(out) :: status
   real(r64), intent(out), optional :: t_fmm_out, t_close_out, timeinfo_out(20)
+  real(r64), intent(in) :: tgl(cfg%order+2_8), wgl(cfg%order+2_8)
+  real(r64), intent(in) :: Dgl(cfg%order+2_8,cfg%order+2_8)
+  real(r64), intent(in) :: w_bclag(cfg%order+2_8)
+  real(r64), intent(in) :: Legmat(cfg%order+2_8,cfg%order+2_8)
+  real(r64), intent(in) :: umatr(cfg%order*(cfg%order+1_8)/2_8, &
+                                 cfg%order*(cfg%order+1_8)/2_8)
+  real(r64), intent(in) :: vmatr(cfg%order*(cfg%order+1_8)/2_8, &
+                                 cfg%order*(cfg%order+1_8)/2_8)
 
   integer(8) :: mp, np, nterms, hdim, nquad, orderff, ntri, nsrc
   integer(8) :: isimd, ichart
@@ -256,8 +265,9 @@ contains
   integer(8) :: c0, c1, crate
   logical(kind(.true.)) :: exterior
 
-  real(r64), allocatable :: tgl(:), wgl(:), Dgl(:,:), uvs(:,:), wts(:)
-  real(r64), allocatable :: tglq(:), wglq(:), Dglq(:,:), uvbd(:,:), tpan(:)
+  real(r64), allocatable :: tgl_geo(:), wgl_geo(:), Dgl_geo(:,:)
+  real(r64), allocatable :: uvs(:,:), wts(:)
+  real(r64), allocatable :: uvbd(:,:), tpan(:)
   real(r64), allocatable :: sx(:,:), snx(:,:), sw(:), rts(:,:), rps(:,:)
   real(r64), allocatable :: ub(:), ubn(:), u(:), charge(:), dipvec(:,:)
   real(r64), allocatable :: cl(:), mn(:), rc(:), zs(:)
@@ -305,9 +315,9 @@ contains
 #else
     t_geo = 0.0_r64
 #endif
-    allocate(tgl(nterms), wgl(nterms), Dgl(nterms,nterms))
+    allocate(tgl_geo(nterms), wgl_geo(nterms), Dgl_geo(nterms,nterms))
     allocate(uvs(2,hdim), wts(hdim))
-    call gauss_r64(nterms, tgl, wgl, Dgl)
+    call gauss_r64(nterms, tgl_geo, wgl_geo, Dgl_geo)
     call get_vioreanu_nodes(nterms-1_8, hdim, uvs)
     call get_vioreanu_wts(nterms-1_8, hdim, wts)
     if (cfg%use_w7x) then
@@ -320,12 +330,12 @@ contains
       call load_w7x_modes(mn, rc, zs)
 #ifdef BIESOLVER_C_BACKEND_ROW_MAJOR
       nchart = biesolver_charts_rowmajor(int(mp,c_long_long), int(np,c_long_long), &
-                   int(nterms,c_long_long), tgl, Dgl, int(W7X_NFP,c_long_long), &
+                   int(nterms,c_long_long), tgl_geo, Dgl_geo, int(W7X_NFP,c_long_long), &
                    int(W7X_NMODE,c_long_long), mn, rc, zs, &
                    cfg%restol, int(cap,c_long_long), cl)
 #else
       nchart = stellarator_charts(int(mp,c_long_long), int(np,c_long_long), &
-                   int(nterms,c_long_long), tgl, Dgl, int(W7X_NFP,c_long_long), &
+                   int(nterms,c_long_long), tgl_geo, Dgl_geo, int(W7X_NFP,c_long_long), &
                    int(W7X_NMODE,c_long_long), mn, rc, zs, &
                    cfg%restol, int(cap,c_long_long), cl)
 #endif
@@ -349,7 +359,7 @@ contains
 #ifdef BIESOLVER_C_BACKEND_ROW_MAJOR
       geometry_ierr = biesolver_geo_charts_rowmajor(cl, int(nchart,c_long_long), &
                    int(mp,c_long_long), int(np,c_long_long), int(nterms,c_long_long), &
-                   tgl, Dgl, uvs, wts, int(W7X_NFP,c_long_long), &
+                   tgl_geo, Dgl_geo, uvs, wts, int(W7X_NFP,c_long_long), &
                    int(W7X_NMODE,c_long_long), mn, rc, zs, &
                    sx, snx, sw, rts, rps)
       if (geometry_ierr /= 0_c_int) then
@@ -359,7 +369,7 @@ contains
 #else
       call stellarator_geo_charts(cl, int(nchart,c_long_long), &
                    int(mp,c_long_long), int(np,c_long_long), int(nterms,c_long_long), &
-                   tgl, Dgl, uvs, wts, int(W7X_NFP,c_long_long), &
+                   tgl_geo, Dgl_geo, uvs, wts, int(W7X_NFP,c_long_long), &
                    int(W7X_NMODE,c_long_long), mn, rc, zs, &
                    sx, snx, sw, rts, rps)
 #endif
@@ -367,7 +377,7 @@ contains
       nchart = 0_8
 #ifdef BIESOLVER_C_BACKEND_ROW_MAJOR
       ntri = biesolver_geo_ntri_rowmajor(int(mp,c_long_long), &
-                 int(np,c_long_long), int(nterms,c_long_long), tgl)
+                 int(np,c_long_long), int(nterms,c_long_long), tgl_geo)
       if (ntri <= 0_8) then
         status = 11_8
         return
@@ -384,7 +394,7 @@ contains
       allocate(sx(3,nsrc), snx(3,nsrc), sw(nsrc), rts(3,nsrc), rps(3,nsrc))
       geometry_ierr = biesolver_geo_rowmajor(int(ntri,c_long_long), &
                    int(mp,c_long_long), int(np,c_long_long), &
-                   int(nterms,c_long_long), tgl, Dgl, uvs, wts, &
+                   int(nterms,c_long_long), tgl_geo, Dgl_geo, uvs, wts, &
                    sx, snx, sw, rts, rps)
       if (geometry_ierr /= 0_c_int) then
         status = 12_8
@@ -392,7 +402,7 @@ contains
       end if
 #else
       ntri = stellarator_geo_ntri(int(mp,c_long_long), int(np,c_long_long), &
-                                  int(nterms,c_long_long), tgl)
+                                  int(nterms,c_long_long), tgl_geo)
       nsrc = ntri*hdim
 #ifdef BIESOLVER_WASM_SCALAR_ONLY
       ! A 64-by-nsrc direct block above the allocator's single-request limit
@@ -404,7 +414,7 @@ contains
 #endif
       allocate(sx(3,nsrc), snx(3,nsrc), sw(nsrc), rts(3,nsrc), rps(3,nsrc))
       call stellarator_geo(int(mp,c_long_long), int(np,c_long_long), &
-                           int(nterms,c_long_long), tgl, Dgl, uvs, wts, &
+                           int(nterms,c_long_long), tgl_geo, Dgl_geo, uvs, wts, &
                            sx, snx, sw, rts, rps)
 #endif
     end if
@@ -505,9 +515,7 @@ contains
 
     ! ---- chart boundary parameterization table ----
     sbdnp = 3_8;  nbd = sbdnp*nquad
-    allocate(tglq(nquad), wglq(nquad), Dglq(nquad,nquad))
     allocate(tpan(sbdnp+1), uvbd(2,nbd+3))
-    call gauss_r64(nquad, tglq, wglq, Dglq)
     do k = 1, sbdnp+1_8
       tpan(k) = real(k-1, r64)*2.0_r64*pi/real(sbdnp, r64)
     end do
@@ -515,7 +523,7 @@ contains
     do k = 1, sbdnp
       do i = 1, nquad
         j  = (k-1_8)*nquad + i
-        tt = tpan(k) + 0.5_r64*(1.0_r64 + tglq(i))*(tpan(k+1) - tpan(k))
+        tt = tpan(k) + 0.5_r64*(1.0_r64 + tgl(i))*(tpan(k+1) - tpan(k))
         uvbd(:,j) = tpar2uv(tt, th1, th2, thi1)
       end do
     end do
@@ -528,8 +536,8 @@ contains
     ! (1) parallel fill of each panel's CSR slice, (2) serial scatter in panel
     ! order.  The scatter reproduces the serial loop's summation order into u,
     ! so the printed digits are independent of the thread count.  One serial
-    ! warm-up call precedes the parallel region: CREF in lap3d_close_mod is
-    ! rebuilt lazily on the first call at a new order.
+    ! warm-up call precedes the parallel region so patch-refinement's shared
+    ! per-order reference state is initialized before threaded evaluation.
     allocate(mtcs(ntri), offs(ntri+1_8))
 #ifndef BIESOLVER_WASM_SCALAR_ONLY
     call system_clock(c0)
@@ -606,7 +614,7 @@ contains
       tw(:,1) = sx(:,1) + 0.01_r64*snx(:,1)
       xbuf = 0.0_r64
       if (ichart == 1_8) call map_panel_uv_bridge(cfg%use_w7x, cl, nchart, &
-        mp, np, nterms, tgl, 1_8, nbd+3_8, uvbd, mn, rc, zs, xbuf, geometry_ierr)
+        mp, np, nterms, tgl_geo, 1_8, nbd+3_8, uvbd, mn, rc, zs, xbuf, geometry_ierr)
 #ifdef BIESOLVER_C_BACKEND_ROW_MAJOR
       if (geometry_ierr /= 0_c_int) then
         status = 13_8
@@ -625,6 +633,7 @@ contains
       call rrq_r64(1_8, tw, hdim, sxk, snxk, swk, rtsk, rpsk, &
                    nterms, nquad, orderff, distff, exterior, isimd, &
                    ichart, xbuf(:,1:nbd), xbuf(:,nbd+1:nbd+3), &
+                   tgl, wgl, Dgl, w_bclag, Legmat, umatr, vmatr, &
                    S1w, K1w, O1w, I1w, tinfo0)
       deallocate(xbuf, O1w)
     end block
@@ -714,7 +723,7 @@ contains
           wIa(1:mtc)         = 0.0_r64
           xbuf = 0.0_r64
           if (ichart == 1_8) call map_panel_uv_bridge(cfg%use_w7x, cl, nchart, &
-            mp, np, nterms, tgl, k, nbd+3_8, uvbd, mn, rc, zs, xbuf, geometry_ierr)
+            mp, np, nterms, tgl_geo, k, nbd+3_8, uvbd, mn, rc, zs, xbuf, geometry_ierr)
 #ifdef BIESOLVER_C_BACKEND_ROW_MAJOR
           if (geometry_ierr /= 0_c_int) then
             status = 13_8
@@ -724,6 +733,7 @@ contains
           call rrq_r64(mtc, wtcx, hdim, sxk, snxk, swk, rtsk, rpsk, &
                        nterms, nquad, orderff, distff, exterior, isimd, &
                        ichart, xbuf(:,1:nbd), xbuf(:,nbd+1:nbd+3), &
+                       tgl, wgl, Dgl, w_bclag, Legmat, umatr, vmatr, &
                        wS, wK, wOm, wIa, timeinfo)
 
 
@@ -814,7 +824,7 @@ contains
       0_c_long_long, 0_c_long_long, 0_c_long_long, 0.0_c_double)
 #endif
     call build_render_lattice(ubnmax, cfg%use_w7x, result, status, &
-      nterms, hdim, ntri, nchart, mp, np, tgl, cl, mn, rc, zs, u, &
+      nterms, hdim, ntri, nchart, mp, np, tgl_geo, cl, mn, rc, zs, u, &
       geometry_ierr)
     if (status /= 0_8) return
     ! Keep the generated C ABI portable: LFortran's current C backend does
@@ -837,7 +847,8 @@ contains
     if (present(t_close_out)) t_close_out = t_close
     if (present(timeinfo_out)) timeinfo_out = timeinfo
 
-    deallocate(tgl, wgl, Dgl, uvs, wts, tglq, wglq, Dglq, tpan, uvbd)
+    deallocate(tgl_geo, wgl_geo, Dgl_geo, uvs, wts)
+    deallocate(tpan, uvbd)
     deallocate(rts, rps)
     deallocate(cl, stat=ier)
     deallocate(mn, stat=ier)

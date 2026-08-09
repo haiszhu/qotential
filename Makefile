@@ -82,6 +82,7 @@ FFLAGS := -g -O3 -fPIC \
 
 # ---- sources ----
 QOT_SOURCES := $(SRC_DIR)/patch_refine_mod.f90 \
+               $(SRC_DIR)/patch_refine_mex.f90 \
                $(SRC_DIR)/lap3d_close_mod.f90 \
                $(SRC_DIR)/lap3d_close_mex.f90
 
@@ -130,6 +131,8 @@ $(BLD_DIR)/%.o: $(SRC_DIR)/%.f90 | $(BLD_DIR) check-deps
 	$(FC) $(FFLAGS) -c $< -o $@
 
 # module dependency: mex wrapper needs the module first
+$(BLD_DIR)/patch_refine_mex.o: $(BLD_DIR)/patch_refine_mod.o
+$(BLD_DIR)/lap3d_close_mod.o: $(BLD_DIR)/patch_refine_mod.o
 $(BLD_DIR)/lap3d_close_mex.o: $(BLD_DIR)/lap3d_close_mod.o
 
 # ---- static library ----

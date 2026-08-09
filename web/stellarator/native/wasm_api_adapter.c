@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 struct stellarator_case_config {
     int64_t mp, np, order, isimd, ichart;
@@ -20,11 +21,19 @@ struct stellarator_case_result {
 };
 
 void stellarator_run_case(struct stellarator_case_config *cfg,
+                          struct r64 *tgl, struct r64 *wgl,
+                          struct r64 *dgl, struct r64 *w_bclag,
+                          struct r64 *legmat, struct r64 *umatr,
+                          struct r64 *vmatr,
                           struct stellarator_case_result *result,
                           int64_t *status,
                           double *t_fmm_out, bool has_t_fmm,
                           double *t_close_out, bool has_t_close,
                           struct r64 *timeinfo_out, bool has_timeinfo);
+void simplex_precomp_r64(int64_t nquad, int64_t korder, int64_t kpols,
+                         struct r64 *tgl, struct r64 *wgl, struct r64 *dgl,
+                         struct r64 *w_bclag, struct r64 *legmat,
+                         struct r64 *umatr, struct r64 *vmatr);
 void stellarator_result_clear(struct stellarator_case_result *result);
 void biesolver_scope_reset(void);
 
@@ -56,6 +65,66 @@ static int fail(int code)
     return code;
 }
 
+static void bind_r64_vector(struct r64 *array, double *data, int64_t length)
+{
+    memset(array, 0, sizeof(*array));
+    array->data = data;
+    array->dims[0].lower_bound = 1;
+    array->dims[0].length = (int32_t)length;
+    array->dims[0].stride = 1;
+    array->n_dims = 1;
+    array->is_allocated = true;
+}
+
+static void bind_r64_matrix(struct r64 *array, double *data,
+                            int64_t rows, int64_t cols)
+{
+    memset(array, 0, sizeof(*array));
+    array->data = data;
+    array->dims[0].lower_bound = 1;
+    array->dims[0].length = (int32_t)rows;
+    array->dims[0].stride = (int32_t)cols;
+    array->dims[1].lower_bound = 1;
+    array->dims[1].length = (int32_t)cols;
+    array->dims[1].stride = 1;
+    array->n_dims = 2;
+    array->is_allocated = true;
+}
+
+static int bind_simplex_precomp(int64_t nquad, int64_t kpols,
+                                double *tgl_data, double *wgl_data,
+                                double *dgl_data, double *w_bclag_data,
+                                double *legmat_data, double *umatr_data,
+                                double *vmatr_data, struct r64 refs[7])
+{
+    if (nquad <= 0 || kpols <= 0 || nquad > INT32_MAX || kpols > INT32_MAX ||
+        tgl_data == NULL || wgl_data == NULL || dgl_data == NULL ||
+        w_bclag_data == NULL || legmat_data == NULL || umatr_data == NULL ||
+        vmatr_data == NULL) return 0;
+    bind_r64_vector(&refs[0], tgl_data, nquad);
+    bind_r64_vector(&refs[1], wgl_data, nquad);
+    bind_r64_matrix(&refs[2], dgl_data, nquad, nquad);
+    bind_r64_vector(&refs[3], w_bclag_data, nquad);
+    bind_r64_matrix(&refs[4], legmat_data, nquad, nquad);
+    bind_r64_matrix(&refs[5], umatr_data, kpols, kpols);
+    bind_r64_matrix(&refs[6], vmatr_data, kpols, kpols);
+    return 1;
+}
+
+int solver_simplex_precomp(int64_t nquad, int64_t korder, int64_t kpols,
+    double *tgl_data, double *wgl_data, double *dgl_data,
+    double *w_bclag_data, double *legmat_data, double *umatr_data,
+    double *vmatr_data)
+{
+    struct r64 refs[7];
+    if (korder < 0 || !bind_simplex_precomp(nquad, kpols, tgl_data, wgl_data,
+            dgl_data, w_bclag_data, legmat_data, umatr_data, vmatr_data, refs))
+        return fail(109);
+    simplex_precomp_r64(nquad, korder, kpols, &refs[0], &refs[1], &refs[2],
+                        &refs[3], &refs[4], &refs[5], &refs[6]);
+    return 0;
+}
+
 int solver_prepare_geometry(void)
 {
     if (solver_state != EMPTY) return fail(101);
@@ -72,13 +141,22 @@ int solver_run_direct(void)
 }
 
 int solver_run_close(int64_t mp, int64_t np, int64_t order,
-                     int64_t surface, double restol)
+                     int64_t surface, double restol,
+                     double *tgl_data, double *wgl_data, double *dgl_data,
+                     double *w_bclag_data, double *legmat_data,
+                     double *umatr_data, double *vmatr_data)
 {
     struct stellarator_case_config cfg = {mp, np, order, 0, 1, false,
                                           surface == 1, restol};
     int64_t status = 0;
+    int64_t kpols = order * (order + 1) / 2;
+    struct r64 refs[7];
     if (solver_state != DIRECT) return fail(103);
-    stellarator_run_case(&cfg, &result, &status,
+    if (!bind_simplex_precomp(order + 2, kpols, tgl_data, wgl_data, dgl_data,
+            w_bclag_data, legmat_data, umatr_data, vmatr_data, refs))
+        return fail(109);
+    stellarator_run_case(&cfg, &refs[0], &refs[1], &refs[2], &refs[3],
+                         &refs[4], &refs[5], &refs[6], &result, &status,
                          NULL, false, NULL, false, NULL, false);
     if (status != 0) return fail((int)(200 + status));
     solver_state = CLOSE;
@@ -101,7 +179,10 @@ void solver_clear(void)
 }
 
 int solver_run(int64_t mp, int64_t np, int64_t order,
-               int64_t surface, double restol)
+               int64_t surface, double restol,
+               double *tgl_data, double *wgl_data, double *dgl_data,
+               double *w_bclag_data, double *legmat_data,
+               double *umatr_data, double *vmatr_data)
 {
     int status;
     int64_t hdim;
@@ -111,6 +192,9 @@ int solver_run(int64_t mp, int64_t np, int64_t order,
     if (order < 4 || order > 16 || order % 2 != 0) return fail(106);
     if (surface != 0 && surface != 1) return fail(107);
     if (surface == 1 && (!isfinite(restol) || restol <= 0.0)) return fail(108);
+    if (tgl_data == NULL || wgl_data == NULL || dgl_data == NULL ||
+        w_bclag_data == NULL || legmat_data == NULL || umatr_data == NULL ||
+        vmatr_data == NULL) return fail(109);
     if (surface == 0) {
         /* Built-in surface: at most four triangles per mp*np cell.  The
            largest single allocation is one 64-by-nsrc double-precision
@@ -131,7 +215,9 @@ int solver_run(int64_t mp, int64_t np, int64_t order,
     }
     status = solver_prepare_geometry();
     if (status == 0) status = solver_run_direct();
-    if (status == 0) status = solver_run_close(mp, np, order, surface, restol);
+    if (status == 0) status = solver_run_close(mp, np, order, surface, restol,
+        tgl_data, wgl_data, dgl_data, w_bclag_data, legmat_data,
+        umatr_data, vmatr_data);
     if (status == 0) status = solver_finalize_result();
     return status;
 }

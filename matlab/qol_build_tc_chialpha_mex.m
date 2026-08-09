@@ -1,0 +1,25 @@
+function [Ichi, Ialpha] = qol_build_tc_chialpha_mex(m, r0, nbd, sbdnp, nquad, ncoeff, sxbd, stangbd, sspbd, w1, w3, Fx, Fy, Fz, IalphaAsvestas, Ichi, Ialpha)
+m = double(m);
+nbd = double(nbd);
+sbdnp = double(sbdnp);
+nquad = double(nquad);
+ncoeff = double(ncoeff);
+nsm = sbdnp*m;
+nc4 = 4*ncoeff;
+r0 = double(reshape(r0, 3, m));
+sxbd = double(reshape(sxbd, 3, nbd));
+stangbd = double(reshape(stangbd, 3, nbd));
+sspbd = double(sspbd(:));
+w1 = double(reshape(w1, nquad, nsm));
+w3 = double(reshape(w3, nquad, nsm));
+Fx = double(reshape(Fx, nbd, ncoeff));
+Fy = double(reshape(Fy, nbd, ncoeff));
+Fz = double(reshape(Fz, nbd, ncoeff));
+IalphaAsvestas = double(IalphaAsvestas(:));
+if nargin < 16 || isempty(Ichi), Ichi = complex(zeros(m, nc4)); end
+if nargin < 17 || isempty(Ialpha), Ialpha = complex(zeros(m, nc4)); end
+mex_id_ = 'qol_build_tc_chialpha_mex(c i int64_t[x], c i double[xx], c i int64_t[x], c i int64_t[x], c i int64_t[x], c i int64_t[x], c i double[xx], c i double[xx], c i double[x], c i double[xx], c i double[xx], c i dcomplex[xx], c i dcomplex[xx], c i dcomplex[xx], c i double[x], c io dcomplex[xx], c io dcomplex[xx])';
+[Ichi, Ialpha] = qotential_mex(mex_id_, m, r0, nbd, sbdnp, nquad, ncoeff, sxbd, stangbd, sspbd, w1, w3, Fx, Fy, Fz, IalphaAsvestas, Ichi, Ialpha, 1, 3, m, 1, 1, 1, 1, 3, nbd, 3, nbd, nbd, nquad, nsm, nquad, nsm, nbd, ncoeff, nbd, ncoeff, nbd, ncoeff, m, m, nc4, m, nc4);
+Ichi = reshape(Ichi, m, ncoeff, 4);
+Ialpha = reshape(Ialpha, m, ncoeff, 4);
+end

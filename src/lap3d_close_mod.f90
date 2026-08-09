@@ -36,18 +36,10 @@ module lap3d_close_mod
 #endif
   public :: build_tc_chialpha_r64
   public :: build_closepanel_precomp_r64
+  public :: simplex_precomp_r64
   public :: rrq_r64
 
   integer(8), parameter :: SBDNP = 8_8
-
-#ifndef BIESOLVER_WASM_SCALAR_ONLY
-  integer(8), save :: CREF_nquad = -1_8, CREF_korder = -1_8
-  integer(8), save :: CREF_kpols = -1_8
-  logical, save :: CREF_set = .false.
-  real(r64), allocatable, save :: CREF_tgl(:), CREF_wgl(:), CREF_Dgl(:,:)
-  real(r64), allocatable, save :: CREF_w_bclag(:), CREF_Legmat(:,:)
-  real(r64), allocatable, save :: CREF_umatr(:,:), CREF_vmatr(:,:)
-#endif
 
   interface
 #ifdef BIESOLVER_STELLARATOR_BUILD
@@ -119,7 +111,7 @@ contains
   end subroutine biesolver_scalar_noop_cpu_time
 #endif
 
-  subroutine close_ref_build_r64(nquad, korder, kpols, tgl, wgl, Dgl, &
+  subroutine simplex_precomp_r64(nquad, korder, kpols, tgl, wgl, Dgl, &
                                  w_bclag, Legmat, umatr, vmatr)
     use koorn_geom_mod,        only: koorn_vals2coefs_coefs2vals
     use quatapproximation_mod, only: gauss_r64, bclaginterpweights_r64
@@ -137,36 +129,7 @@ contains
 
     umatr = 0.0_r64;  vmatr = 0.0_r64
     call koorn_vals2coefs_coefs2vals(korder, kpols, umatr, vmatr)
-  end subroutine close_ref_build_r64
-
-#ifndef BIESOLVER_WASM_SCALAR_ONLY
-  subroutine close_ref_ensure_r64(nquad, korder, kpols)
-    integer(8), intent(in) :: nquad, korder, kpols
-
-    if (CREF_set .and. CREF_nquad == nquad .and. &
-        CREF_korder == korder .and. CREF_kpols == kpols) return
-
-    !$omp critical (close_ref_build)
-    if (.not. (CREF_set .and. CREF_nquad == nquad .and. &
-               CREF_korder == korder .and. CREF_kpols == kpols)) then
-
-    if (CREF_set) deallocate(CREF_tgl, CREF_wgl, CREF_Dgl, &
-                             CREF_w_bclag, CREF_Legmat, &
-                             CREF_umatr, CREF_vmatr)
-    allocate(CREF_tgl(nquad), CREF_wgl(nquad), CREF_Dgl(nquad,nquad))
-    allocate(CREF_w_bclag(nquad), CREF_Legmat(nquad,nquad))
-    allocate(CREF_umatr(kpols,kpols), CREF_vmatr(kpols,kpols))
-    call close_ref_build_r64(nquad, korder, kpols, CREF_tgl, CREF_wgl, &
-                             CREF_Dgl, CREF_w_bclag, CREF_Legmat, &
-                             CREF_umatr, CREF_vmatr)
-    CREF_nquad = nquad;  CREF_korder = korder;  CREF_kpols = kpols
-    CREF_set = .true.
-
-    end if
-    !$omp end critical (close_ref_build)
-
-  end subroutine close_ref_ensure_r64
-#endif
+  end subroutine simplex_precomp_r64
 
   subroutine Lap3dDLP_closepanel_r64(m_tgt, t_x, npat, s_x, order, ref, &
                                      if_adapt, Ac)
@@ -176,7 +139,7 @@ contains
     logical,    intent(in)  :: if_adapt
     real(r64),  intent(out) :: Ac(m_tgt, npat)
 
-    integer(8) :: nquad, nbd, h_dim, morder, ncol, idx, k, kk
+    integer(8) :: nquad, nbd, h_dim, morder, ncol, moment_order, idx, k, kk
     real(r64), allocatable :: tgl(:), wgl(:), Dgl(:,:), tpan(:)
     real(r64), allocatable :: sxbd(:,:), swbd(:), stangbd(:,:), sspbd(:)
     real(r64), allocatable :: F(:,:), Fx(:,:), Fy(:,:), Fz(:,:)
@@ -187,7 +150,8 @@ contains
     real(r64), allocatable :: onm0(:,:,:), onm1(:,:,:), onm2(:,:,:), onm3(:,:,:)
     real(r64), allocatable :: dr(:,:)
     real(r64), allocatable :: Omega_all(:,:)
-    real(r64), allocatable :: Mmat(:,:), rhs(:,:)
+    real(r64), allocatable :: Mmat(:,:), rhs(:,:), Asys(:,:)
+    real(r64), allocatable :: funvals_full(:,:,:)
     real(r64), parameter :: PI = 4.0_r64*atan(1.0_r64)
 
     nquad = ref * order
@@ -269,16 +233,12 @@ contains
     allocate(M_all(nbd, ncol, m_tgt))
     M_all = 0.0_r64
     if (if_adapt) then
-      block
-        real(r64), allocatable :: funvals_full(:,:,:)
-        integer(8) :: moment_order
-        moment_order = 2_8*order + 1_8
-        allocate(funvals_full(nbd, 2_8*ncol, m_tgt))
-        call eval_moments_funvals_r64(m_tgt, t_x, nbd, sxbd, nquad, &
-                                      moment_order, funvals_full)
-        M_all = funvals_full(:, ncol+1_8:2_8*ncol, :)
-        deallocate(funvals_full)
-      end block
+      moment_order = 2_8*order + 1_8
+      allocate(funvals_full(nbd, 2_8*ncol, m_tgt))
+      call eval_moments_funvals_r64(m_tgt, t_x, nbd, sxbd, nquad, &
+                                    moment_order, funvals_full)
+      M_all = funvals_full(:, ncol+1_8:2_8*ncol, :)
+      deallocate(funvals_full)
     else
       write(*,*) 'Lap3dDLP_closepanel_r64: if_adapt=.false. not yet implemented'
       write(*,*) '  (need a Fortran port of momentsallplain in moments.f).'
@@ -295,12 +255,11 @@ contains
                           ijidx, Omega_all)
 
     allocate(rhs(4*h_dim, m_tgt))
+    allocate(Asys(4*h_dim, 4*h_dim))
     rhs = transpose(Omega_all)
-    block
-      real(r64) :: Asys(4*h_dim, 4*h_dim)
-      Asys = transpose(Mmat)
-      call lu_solve_local_r64(4_8*h_dim, Asys, m_tgt, rhs)
-    end block
+    Asys = transpose(Mmat)
+    call lu_solve_local_r64(4_8*h_dim, Asys, m_tgt, rhs)
+    deallocate(Asys)
     do k = 1, m_tgt
       do kk = 1, npat
         Ac(k, kk) = rhs(kk, k)
@@ -512,21 +471,18 @@ contains
   subroutine build_closepanel_precomp_r64(n, sx, snx, sw, r_vert, &
                                           nterms, h_dim, nbd, sbdnp, nquad, &
                                           alpha, exterior, ichart, sxbd_chart, &
-                                          tgl, wgl, Dgl, w_bclag, Legmat, &
+                                          tgl, wgl, Dgl, umatr, &
                                           R, c, sxbd, swbd, stangbd, sspbd, &
                                           qhat, Fbd, Fxbd, Fybd, Fzbd, Mmatrix)
-    use koorn_geom_mod, only: circumcircle_transform_3d, &
-                              koorn_vals2coefs_coefs2vals, line3quadr_3dline
+    use koorn_geom_mod, only: circumcircle_transform_3d, line3quadr_3dline
     use harmonic_mod,   only: l3dtavecevalmat_r64
-    use quatapproximation_mod, only: gauss_r64, bclaginterpweights_r64
-    use linequaaadrature_mod,  only: legeexps_r64
     integer(8), intent(in)  :: n, nterms, h_dim, nbd, sbdnp, nquad
     real(r64),  intent(in)  :: sx(3,n), snx(3,n), sw(n), r_vert(3,3), alpha
     integer(8), intent(in)  :: ichart
     real(r64),  intent(in)  :: sxbd_chart(3,nbd)
     logical,    intent(in)  :: exterior
-    real(r64),  intent(out) :: tgl(nquad), wgl(nquad), Dgl(nquad,nquad)
-    real(r64),  intent(out) :: w_bclag(nquad), Legmat(nquad,nquad)
+    real(r64),  intent(in)  :: tgl(nquad), wgl(nquad), Dgl(nquad,nquad)
+    real(r64),  intent(in)  :: umatr(h_dim,h_dim)
     real(r64),  intent(out) :: R(3,3), c(3)
     real(r64),  intent(out) :: sxbd(3,nbd), swbd(nbd)
     real(r64),  intent(out) :: stangbd(3,nbd), sspbd(nbd)
@@ -537,26 +493,23 @@ contains
 
     real(r64), parameter :: OFFSET_FACTOR = 1.25_r64   ! rrq linequadv2.f:8140
 
-    real(r64)  :: vtmp(nquad,nquad), umatr(n,n), vmatr(n,n)
     real(r64)  :: c0(3), alpha_circ, sxt(3,n), snxt(3,n)
     real(r64)  :: tpan(sbdnp+1), r_vert_local(3,3), sx3min, pi
     real(r64)  :: F0(n,h_dim), F1(n,h_dim), F2(n,h_dim), F3(n,h_dim)
     real(r64)  :: MmatrixS(h_dim,h_dim)
+    real(r64)  :: pt
     integer(8) :: korder, kpols, idxvec(h_dim), i, k, ij, t1, t2, ier
+    integer(8) :: ell, i0, i1, iq
+
+    real(r64),    allocatable :: sxp(:,:), sw0(:)
+    real(r64),    allocatable :: pbd(:,:), psurf(:,:)
+    complex(r64), allocatable :: Gxbd(:,:), Gybd(:,:), Gzbd(:,:)
+    complex(r64), allocatable :: Fc(:,:), Gxsurf(:,:), Gysurf(:,:), Gzsurf(:,:)
 
     pi = 4.0_r64*atan(1.0_r64)
 
     korder = nterms - 1_8
     kpols  = nterms*(nterms+1_8)/2_8
-#ifdef BIESOLVER_WASM_SCALAR_ONLY
-    call close_ref_build_r64(nquad, korder, kpols, tgl, wgl, Dgl, &
-                             w_bclag, Legmat, umatr, vmatr)
-#else
-    call close_ref_ensure_r64(nquad, korder, kpols)
-    tgl = CREF_tgl;  wgl = CREF_wgl;  Dgl = CREF_Dgl
-    w_bclag = CREF_w_bclag;  Legmat = CREF_Legmat
-    umatr = CREF_umatr;  vmatr = CREF_vmatr
-#endif
 
     call circumcircle_transform_3d(r_vert, R, c0, alpha_circ)
     do i = 1, n
@@ -579,29 +532,27 @@ contains
                            r_vert_local)
 
     if (ichart == 1_8) then
-      block
-        real(r64) :: sxp(3,nbd), pt, sw0(nbd)
-        integer(8) :: ell, i0, i1, iq
-        do i = 1, nbd
-          sxbd(:,i) = alpha*matmul(R, sxbd_chart(:,i) - c)
+      allocate(sxp(3,nbd), sw0(nbd))
+      do i = 1, nbd
+        sxbd(:,i) = alpha*matmul(R, sxbd_chart(:,i) - c)
+      end do
+      pt = 2.0_r64*pi/real(sbdnp, r64)
+      do ell = 1, sbdnp
+        i0 = (ell-1_8)*nquad + 1_8
+        i1 = ell*nquad
+        sxp(1,i0:i1) = (2.0_r64/pt)*matmul(Dgl, sxbd(1,i0:i1))
+        sxp(2,i0:i1) = (2.0_r64/pt)*matmul(Dgl, sxbd(2,i0:i1))
+        sxp(3,i0:i1) = (2.0_r64/pt)*matmul(Dgl, sxbd(3,i0:i1))
+        do iq = 1, nquad
+          sw0(i0+iq-1_8) = 0.5_r64*wgl(iq)*pt
         end do
-        pt = 2.0_r64*pi/real(sbdnp, r64)
-        do ell = 1, sbdnp
-          i0 = (ell-1_8)*nquad + 1_8
-          i1 = ell*nquad
-          sxp(1,i0:i1) = (2.0_r64/pt)*matmul(Dgl, sxbd(1,i0:i1))
-          sxp(2,i0:i1) = (2.0_r64/pt)*matmul(Dgl, sxbd(2,i0:i1))
-          sxp(3,i0:i1) = (2.0_r64/pt)*matmul(Dgl, sxbd(3,i0:i1))
-          do iq = 1, nquad
-            sw0(i0+iq-1_8) = 0.5_r64*wgl(iq)*pt
-          end do
-        end do
-        sspbd = sqrt(sxp(1,:)**2 + sxp(2,:)**2 + sxp(3,:)**2)
-        stangbd(1,:) = sxp(1,:)/sspbd
-        stangbd(2,:) = sxp(2,:)/sspbd
-        stangbd(3,:) = sxp(3,:)/sspbd
-        swbd = sw0*sspbd
-      end block
+      end do
+      sspbd = sqrt(sxp(1,:)**2 + sxp(2,:)**2 + sxp(3,:)**2)
+      stangbd(1,:) = sxp(1,:)/sspbd
+      stangbd(2,:) = sxp(2,:)/sspbd
+      stangbd(3,:) = sxp(3,:)/sspbd
+      swbd = sw0*sspbd
+      deallocate(sxp, sw0)
     end if
 
     sspbd = (pi/real(sbdnp, r64))*sspbd
@@ -612,15 +563,14 @@ contains
     if (.not. exterior) qhat = -qhat
     qhat = qhat/sqrt(dot_product(qhat, qhat))
 
-    block
-      real(r64)    :: p(3,nbd)
-      complex(r64) :: Gx(nbd,(nterms+1)**2), Gy(nbd,(nterms+1)**2)
-      complex(r64) :: Gz(nbd,(nterms+1)**2)
-      p(1,:) = sxbd(2,:);  p(2,:) = sxbd(3,:);  p(3,:) = sxbd(1,:)
-      ier = 0
-      call l3dtavecevalmat_r64(p, nbd, nterms, Fbd, Gx, Gy, Gz, ier)
-      Fxbd = Gz;  Fybd = Gx;  Fzbd = Gy
-    end block
+    allocate(pbd(3,nbd))
+    allocate(Gxbd(nbd,(nterms+1)**2), Gybd(nbd,(nterms+1)**2))
+    allocate(Gzbd(nbd,(nterms+1)**2))
+    pbd(1,:) = sxbd(2,:);  pbd(2,:) = sxbd(3,:);  pbd(3,:) = sxbd(1,:)
+    ier = 0
+    call l3dtavecevalmat_r64(pbd, nbd, nterms, Fbd, Gxbd, Gybd, Gzbd, ier)
+    Fxbd = Gzbd;  Fybd = Gxbd;  Fzbd = Gybd
+    deallocate(pbd, Gxbd, Gybd, Gzbd)
 
     t1 = 0_8;  t2 = 0_8
     do ij = 0, nterms
@@ -632,20 +582,19 @@ contains
       end do
     end do
 
-    block
-      real(r64)    :: p(3,n)
-      complex(r64) :: Fc(n,(nterms+1)**2), Gx(n,(nterms+1)**2)
-      complex(r64) :: Gy(n,(nterms+1)**2), Gz(n,(nterms+1)**2)
-      p(1,:) = sxt(2,:);  p(2,:) = sxt(3,:);  p(3,:) = sxt(1,:)
-      ier = 0
-      call l3dtavecevalmat_r64(p, n, nterms, Fc, Gx, Gy, Gz, ier)
-      do k = 1, h_dim
-        F0(:,k) = aimag(Fc(:,idxvec(k)))
-        F1(:,k) = aimag(Gz(:,idxvec(k)))
-        F2(:,k) = aimag(Gx(:,idxvec(k)))
-        F3(:,k) = aimag(Gy(:,idxvec(k)))
-      end do
-    end block
+    allocate(psurf(3,n), Fc(n,(nterms+1)**2))
+    allocate(Gxsurf(n,(nterms+1)**2), Gysurf(n,(nterms+1)**2))
+    allocate(Gzsurf(n,(nterms+1)**2))
+    psurf(1,:) = sxt(2,:);  psurf(2,:) = sxt(3,:);  psurf(3,:) = sxt(1,:)
+    ier = 0
+    call l3dtavecevalmat_r64(psurf, n, nterms, Fc, Gxsurf, Gysurf, Gzsurf, ier)
+    do k = 1, h_dim
+      F0(:,k) = aimag(Fc(:,idxvec(k)))
+      F1(:,k) = aimag(Gzsurf(:,idxvec(k)))
+      F2(:,k) = aimag(Gxsurf(:,idxvec(k)))
+      F3(:,k) = aimag(Gysurf(:,idxvec(k)))
+    end do
+    deallocate(psurf, Fc, Gxsurf, Gysurf, Gzsurf)
 
     Mmatrix = 0.0_r64
     Mmatrix(     1:  n, (  h_dim+1):(2*h_dim)) = -F1
@@ -672,6 +621,7 @@ contains
   subroutine rrq_r64(m, tx, n, sx, snx, sw, rts, rps, &
                      order, nquad, orderff, distff, exterior, isimd, &
                      ichart, sxbd_chart, rv_chart, &
+                     tgl, wgl, Dgl, w_bclag, Legmat, umatr, vmatr, &
                      As, Ad, Omega, IalphaAsvestas, timeinfo)
     use patch_refine_mod, only: patch_levels_t, build_patch_levels_r64, &
                                 clear_patch_levels_r64, &
@@ -690,18 +640,24 @@ contains
     real(r64),  intent(inout) :: timeinfo(20)
     integer(8), intent(in)    :: ichart
     real(r64),  intent(in)    :: sxbd_chart(3,3*nquad), rv_chart(3,3)
+    real(r64),  intent(in)    :: tgl(nquad), wgl(nquad)
+    real(r64),  intent(in)    :: Dgl(nquad,nquad), w_bclag(nquad)
+    real(r64),  intent(in)    :: Legmat(nquad,nquad)
+    real(r64),  intent(in)    :: &
+      umatr(order*(order+1)/2,order*(order+1)/2), &
+      vmatr(order*(order+1)/2,order*(order+1)/2)
 
-    integer(8), parameter :: LEN1 = 4_8, LEN2 = 8_8, LEN3 = 16_8
+    integer(8), parameter :: LEN0 = 1_8
+    integer(8), parameter :: LEN1 = 4_8, LEN2 = 8_8, LEN3 = 16_8  ! extended ladder (#51); rrq :9239 had 2/4/8
     integer(8), parameter :: NLEVEL = 4_8
     real(r64),  parameter :: RHO_SSQ = 100.0_r64                 ! rrq :609
 
     integer(8) :: nterms, h_dim, ncoeff, sbdnp, nbd, korder, kpols
-    integer(8) :: nb1, nb2, nb3, i, j, k, ij, t1, t2, ms
+    integer(8) :: nb1, nb2, nb3, i, j, k, ij, t1, t2, ms, info
     real(r64)  :: alpha, pi, fac, t0, t1c
     type(patch_levels_t) :: lv
 
-    real(r64) :: tgl(nquad), wgl(nquad), Dgl(nquad,nquad), w_bclag(nquad)
-    real(r64) :: Legmat(nquad,nquad), bclagmatlr(nquad,2)
+    real(r64) :: bclagmatlr(nquad,2)
     real(r64) :: R(3,3), c(3), qhat(3), r_vert(3,3)
     real(r64) :: sxbd(3,3*nquad), swbd(3*nquad)
     real(r64) :: sxbd_raw(3,3*nquad)
@@ -716,15 +672,29 @@ contains
     complex(r64) :: Fybd(3*nquad,(order+1)**2), Fzbd(3*nquad,(order+1)**2)
     real(r64) :: Mmatrix(4*(order*(order+1)/2),4*(order*(order+1)/2))
     real(r64) :: sxt(3,n), dl(nquad), dr(nquad)
-    real(r64) :: umatr(order*(order+1)/2,order*(order+1)/2)
-    real(r64) :: vmatr(order*(order+1)/2,order*(order+1)/2)
+    real(r64) :: tp(3*LEN0+1), bw(3*nquad), bt(3,3*nquad), bs(3*nquad)
+    real(r64) :: tp1(3*LEN1+1), ss1(3*LEN1*nquad), rv1(3,3)
+    real(r64) :: tp2(3*LEN2+1), ss2(3*LEN2*nquad), rv2(3,3)
+    real(r64) :: tp3(3*LEN3+1), ss3(3*LEN3*nquad), rv3(3,3)
     integer(8) :: idxs(m)
+
+    real(r64),    allocatable :: txn(:,:)
+    real(r64),    allocatable :: w1(:,:,:), w3(:,:,:), w5(:,:,:)
+    complex(r64), allocatable :: troot(:,:), xr(:,:), yr(:,:), zr(:,:)
+    real(r64),    allocatable :: xrr(:,:), yrr(:,:), zrr(:,:)
+    integer(8),   allocatable :: rfc(:,:), rfc_ssq(:), idxnp(:)
+    complex(r64), allocatable :: Fx(:,:), Fy(:,:), Fz(:,:)
+    complex(r64), allocatable :: Ichi(:,:,:), Ialpha(:,:,:)
+    real(r64),    allocatable :: Ias(:), om_slp(:,:), om(:,:,:)
+    real(r64),    allocatable :: Ocl(:,:), Oadd(:,:), Atmp(:,:)
+    real(r64),    allocatable :: MD(:,:), Msl(:,:), Fm(:,:), Otmp(:,:)
+    integer(8),   allocatable :: ipiv4(:), ipiv1(:)
 
     pi     = 4.0_r64*atan(1.0_r64)
     nterms = order
     h_dim  = nterms*(nterms+1_8)/2_8
     ncoeff = (nterms+1_8)*(nterms+2_8)/2_8
-    sbdnp  = 3_8                       ! rrq: sbdnp = 3*len0, len0 = 1
+    sbdnp  = 3_8*LEN0
     nbd    = sbdnp*nquad
     korder = nterms - 1_8
     kpols  = nterms*(nterms+1_8)/2_8
@@ -744,33 +714,21 @@ contains
 
     call cpu_time(t0)
 
-#ifdef BIESOLVER_WASM_SCALAR_ONLY
-    call close_ref_build_r64(nquad, korder, kpols, tgl, wgl, Dgl, &
-                             w_bclag, Legmat, umatr, vmatr)
-#else
-    call close_ref_ensure_r64(nquad, korder, kpols)
-    tgl = CREF_tgl;  wgl = CREF_wgl;  Dgl = CREF_Dgl
-    w_bclag = CREF_w_bclag;  Legmat = CREF_Legmat
-    umatr = CREF_umatr;  vmatr = CREF_vmatr
-#endif
-    block
-      real(r64) :: tp(sbdnp+1), bw(3*nquad)
-      real(r64) :: bt(3,3*nquad), bs(3*nquad)
-      do k = 1, sbdnp+1_8
-        tp(k) = real(k-1, r64)*2.0_r64*pi/real(sbdnp, r64)
-      end do
-      sxbd_raw = 0.0_r64; bw = 0.0_r64; bt = 0.0_r64; bs = 0.0_r64
-      r_vert = 0.0_r64
-      call line3quadr_3dline(sx, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
-                             sbdnp, tp, nbd, sxbd_raw, bw, bt, bs, r_vert)
-    end block
-    if (ichart == 1_8) sxbd_raw = sxbd_chart
-
-    if (ichart == 1_8) r_vert = rv_chart
+    do k = 1, sbdnp+1_8
+      tp(k) = real(k-1, r64)*2.0_r64*pi/real(sbdnp, r64)
+    end do
+    sxbd_raw = 0.0_r64; bw = 0.0_r64; bt = 0.0_r64; bs = 0.0_r64
+    r_vert = 0.0_r64
+    call line3quadr_3dline(sx, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
+                           sbdnp, tp, nbd, sxbd_raw, bw, bt, bs, r_vert)
+    if (ichart == 1_8) then
+      sxbd_raw = sxbd_chart
+      r_vert = rv_chart
+    end if
     call build_closepanel_precomp_r64(n, sx, snx, sw, r_vert, &
                                       nterms, h_dim, nbd, sbdnp, nquad, &
                                       alpha, exterior, ichart, sxbd_chart, &
-                                      tgl, wgl, Dgl, w_bclag, Legmat, &
+                                      tgl, wgl, Dgl, umatr, &
                                       R, c, sxbd, swbd, stangbd, sspbd, &
                                       qhat, Fbd, Fxbd, Fybd, Fzbd, Mmatrix)
 
@@ -778,36 +736,29 @@ contains
       sxt(:,i) = alpha*matmul(R, sx(:,i) - c)
     end do
 
-    block
-      real(r64) :: tp(3*LEN1+1), ss(3*LEN1*nquad), rv(3,3)
-      do k = 1, 3_8*LEN1+1_8
-        tp(k) = real(k-1, r64)*2.0_r64*pi/real(3_8*LEN1, r64)
-      end do
-      sxbd1 = 0.0_r64; swbd1 = 0.0_r64; stangbd1 = 0.0_r64; ss = 0.0_r64
-      rv = 0.0_r64
-      call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
-                             3_8*LEN1, tp, nb1, sxbd1, swbd1, stangbd1, ss, rv)
-    end block
-    block
-      real(r64) :: tp(3*LEN2+1), ss(3*LEN2*nquad), rv(3,3)
-      do k = 1, 3_8*LEN2+1_8
-        tp(k) = real(k-1, r64)*2.0_r64*pi/real(3_8*LEN2, r64)
-      end do
-      sxbd2 = 0.0_r64; swbd2 = 0.0_r64; stangbd2 = 0.0_r64; ss = 0.0_r64
-      rv = 0.0_r64
-      call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
-                             3_8*LEN2, tp, nb2, sxbd2, swbd2, stangbd2, ss, rv)
-    end block
-    block
-      real(r64) :: tp(3*LEN3+1), ss(3*LEN3*nquad), rv(3,3)
-      do k = 1, 3_8*LEN3+1_8
-        tp(k) = real(k-1, r64)*2.0_r64*pi/real(3_8*LEN3, r64)
-      end do
-      sxbd3 = 0.0_r64; swbd3 = 0.0_r64; stangbd3 = 0.0_r64; ss = 0.0_r64
-      rv = 0.0_r64
-      call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
-                             3_8*LEN3, tp, nb3, sxbd3, swbd3, stangbd3, ss, rv)
-    end block
+    do k = 1, 3_8*LEN1+1_8
+      tp1(k) = real(k-1, r64)*2.0_r64*pi/real(3_8*LEN1, r64)
+    end do
+    sxbd1 = 0.0_r64; swbd1 = 0.0_r64; stangbd1 = 0.0_r64; ss1 = 0.0_r64
+    rv1 = 0.0_r64
+    call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
+                           3_8*LEN1, tp1, nb1, sxbd1, swbd1, stangbd1, ss1, rv1)
+
+    do k = 1, 3_8*LEN2+1_8
+      tp2(k) = real(k-1, r64)*2.0_r64*pi/real(3_8*LEN2, r64)
+    end do
+    sxbd2 = 0.0_r64; swbd2 = 0.0_r64; stangbd2 = 0.0_r64; ss2 = 0.0_r64
+    rv2 = 0.0_r64
+    call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
+                           3_8*LEN2, tp2, nb2, sxbd2, swbd2, stangbd2, ss2, rv2)
+
+    do k = 1, 3_8*LEN3+1_8
+      tp3(k) = real(k-1, r64)*2.0_r64*pi/real(3_8*LEN3, r64)
+    end do
+    sxbd3 = 0.0_r64; swbd3 = 0.0_r64; stangbd3 = 0.0_r64; ss3 = 0.0_r64
+    rv3 = 0.0_r64
+    call line3quadr_3dline(sxt, korder, kpols, umatr, nquad, tgl, wgl, Dgl, &
+                           3_8*LEN3, tp3, nb3, sxbd3, swbd3, stangbd3, ss3, rv3)
 
     dl = w_bclag/(-1.0_r64 - tgl)
     dr = w_bclag/( 1.0_r64 - tgl)
@@ -821,105 +772,107 @@ contains
     call cpu_time(t1c);  timeinfo(3) = timeinfo(3) + (t1c - t0)
 
     if (ms > 0_8) then
-      block
-        real(r64)    :: txn(3,ms)
-        real(r64)    :: w1(nquad,3,ms), w3(nquad,3,ms), w5(nquad,3,ms)
-        complex(r64) :: troot(ms,3), xr(ms,3), yr(ms,3), zr(ms,3)
-        real(r64)    :: xrr(ms,3), yrr(ms,3), zrr(ms,3)
-        integer(8)   :: rfc(ms,3), rfc_ssq(ms), idxnp(ncoeff)
-        complex(r64) :: Fx(3*nquad,ncoeff), Fy(3*nquad,ncoeff)
-        complex(r64) :: Fz(3*nquad,ncoeff)
-        complex(r64) :: Ichi(ms,ncoeff,4), Ialpha(ms,ncoeff,4)
-        real(r64)    :: Ias(ms), om_slp(h_dim,ms), om(h_dim,ms,4)
-        real(r64)    :: Ocl(h_dim,ms), Oadd(4*h_dim,ms), Atmp(4*h_dim,ms)
-        real(r64)    :: MD(4*h_dim,4*h_dim), Msl(h_dim,h_dim)
-        real(r64)    :: Fm(h_dim,h_dim), Otmp(h_dim,ms)
-        integer(8)   :: ipiv4(4*h_dim), ipiv1(h_dim), info
+      allocate(txn(3,ms))
+      allocate(w1(nquad,3,ms), w3(nquad,3,ms), w5(nquad,3,ms))
+      allocate(troot(ms,3), xr(ms,3), yr(ms,3), zr(ms,3))
+      allocate(xrr(ms,3), yrr(ms,3), zrr(ms,3))
+      allocate(rfc(ms,3), rfc_ssq(ms), idxnp(ncoeff))
+      allocate(Fx(3*nquad,ncoeff), Fy(3*nquad,ncoeff), Fz(3*nquad,ncoeff))
+      allocate(Ichi(ms,ncoeff,4), Ialpha(ms,ncoeff,4))
+      allocate(Ias(ms), om_slp(h_dim,ms), om(h_dim,ms,4))
+      allocate(Ocl(h_dim,ms), Oadd(4*h_dim,ms), Atmp(4*h_dim,ms))
+      allocate(MD(4*h_dim,4*h_dim), Msl(h_dim,h_dim))
+      allocate(Fm(h_dim,h_dim), Otmp(h_dim,ms))
+      allocate(ipiv4(4*h_dim), ipiv1(h_dim))
 
-        do j = 1, ms
-          txn(:,j) = alpha*matmul(R, tx(:,idxs(j)) - c)
+      do j = 1, ms
+        txn(:,j) = alpha*matmul(R, tx(:,idxs(j)) - c)
+      end do
+
+      call cpu_time(t0)
+      w1 = 0.0_r64;  w3 = 0.0_r64;  w5 = 0.0_r64
+      troot = (0.0_r64,0.0_r64);  xr = troot;  yr = troot;  zr = troot
+      rfc = 0_8;  rfc_ssq = 0_8
+      call build_ssq_weights_r64(ms, txn, RHO_SSQ, nbd, sxbd, sbdnp, nquad, &
+                                 tgl, wgl, Legmat, w1, w3, w5, &
+                                 troot, xr, yr, zr, rfc, rfc_ssq)
+      call cpu_time(t1c);  timeinfo(4) = timeinfo(4) + (t1c - t0)
+
+      call cpu_time(t0)
+      xrr = 0.0_r64;  yrr = 0.0_r64;  zrr = 0.0_r64
+      xrr = real(xr, r64)
+      yrr = real(yr, r64)
+      zrr = real(zr, r64)
+      Ias = 0.0_r64
+      call evaluate_solid_angle_integral_fast_r64(ms, txn, nbd, sbdnp, nquad, &
+           sxbd, stangbd, sspbd, &
+           LEN1, sxbd1, stangbd1, swbd1, &
+           LEN2, sxbd2, stangbd2, swbd2, &
+           LEN3, sxbd3, stangbd3, swbd3, &
+           qhat, tgl, wgl, Dgl, w_bclag, bclagmatlr, &
+           troot, xrr, yrr, zrr, rfc, Ias, &
+           rho_in=8.0_r64**(8.0_r64/real(nquad, r64)), &
+           sxbd_raw=sxbd_raw, tx_raw=tx(:,idxs(1:ms)), &
+           Rfr=R, alpha_fr=alpha, Legmat=Legmat)
+      call cpu_time(t1c);  timeinfo(5) = timeinfo(5) + (t1c - t0)
+
+      call cpu_time(t0)
+      t1 = 0_8;  t2 = 0_8
+      do ij = 0, nterms
+        do k = -ij, ij
+          t2 = t2 + 1_8
+          if (k <= 0_8) then
+            t1 = t1 + 1_8;  idxnp(t1) = t2
+          end if
         end do
+      end do
+      Fx = Fxbd(:,idxnp);  Fy = Fybd(:,idxnp);  Fz = Fzbd(:,idxnp)
 
-        call cpu_time(t0)
-        w1 = 0.0_r64;  w3 = 0.0_r64;  w5 = 0.0_r64
-        troot = (0.0_r64,0.0_r64);  xr = troot;  yr = troot;  zr = troot
-        rfc = 0_8;  rfc_ssq = 0_8
-        call build_ssq_weights_r64(ms, txn, RHO_SSQ, nbd, sxbd, sbdnp, nquad, &
-                                   tgl, wgl, Legmat, w1, w3, w5, &
-                                   troot, xr, yr, zr, rfc, rfc_ssq)
-        call cpu_time(t1c);  timeinfo(4) = timeinfo(4) + (t1c - t0)
+      call build_tc_chialpha_r64(ms, txn, nbd, sbdnp, nquad, ncoeff, &
+                                 sxbd, stangbd, sspbd, w1, w3, &
+                                 Fx, Fy, Fz, Ias, Ichi, Ialpha)
+      call cpu_time(t1c);  timeinfo(6) = timeinfo(6) + (t1c - t0)
 
-        call cpu_time(t0)
-        xrr = 0.0_r64;  yrr = 0.0_r64;  zrr = 0.0_r64
-        xrr = real(xr, r64)
-        yrr = real(yr, r64)
-        zrr = real(zr, r64)
-        Ias = 0.0_r64
-        call evaluate_solid_angle_integral_fast_r64(ms, txn, nbd, sbdnp, nquad, &
-             sxbd, stangbd, sspbd, &
-             LEN1, sxbd1, stangbd1, swbd1, &
-             LEN2, sxbd2, stangbd2, swbd2, &
-             LEN3, sxbd3, stangbd3, swbd3, &
-             qhat, tgl, wgl, Dgl, w_bclag, bclagmatlr, &
-             troot, xrr, yrr, zrr, rfc, Ias, &
-             rho_in=8.0_r64**(8.0_r64/real(nquad, r64)), &
-             sxbd_raw=sxbd_raw, tx_raw=tx(:,idxs(1:ms)), &
-             Rfr=R, alpha_fr=alpha, Legmat=Legmat)
-        call cpu_time(t1c);  timeinfo(5) = timeinfo(5) + (t1c - t0)
+      call cpu_time(t0)
+      call qao_omegasdlp_r64(ms, nterms, ncoeff, h_dim, txn, Ichi, Ialpha, &
+                             om_slp, om)
+      call cpu_time(t1c);  timeinfo(7) = timeinfo(7) + (t1c - t0)
 
-        call cpu_time(t0)
-        t1 = 0_8;  t2 = 0_8
-        do ij = 0, nterms
-          do k = -ij, ij
-            t2 = t2 + 1_8
-            if (k <= 0_8) then
-              t1 = t1 + 1_8;  idxnp(t1) = t2
-            end if
-          end do
-        end do
-        Fx = Fxbd(:,idxnp);  Fy = Fybd(:,idxnp);  Fz = Fzbd(:,idxnp)
+      call cpu_time(t0)
+      fac = 1.0_r64/(4.0_r64*pi)/alpha
+      Ocl = fac*om_slp
+      Oadd(        1:  h_dim, :) =  om(:,:,1)
+      Oadd(  h_dim+1:2*h_dim, :) = -om(:,:,2)
+      Oadd(2*h_dim+1:3*h_dim, :) = -om(:,:,3)
+      Oadd(3*h_dim+1:4*h_dim, :) = -om(:,:,4)
+      Oadd = -fac*Oadd
 
-        call build_tc_chialpha_r64(ms, txn, nbd, sbdnp, nquad, ncoeff, &
-                                   sxbd, stangbd, sspbd, w1, w3, &
-                                   Fx, Fy, Fz, Ias, Ichi, Ialpha)
-        call cpu_time(t1c);  timeinfo(6) = timeinfo(6) + (t1c - t0)
+      Msl = Mmatrix(      1:  h_dim,       1:  h_dim)
+      Fm = Mmatrix(h_dim+1:2*h_dim, h_dim+1:2*h_dim)
+      MD = Mmatrix
+      MD(      1:  h_dim,       1:  h_dim) = 0.0_r64
+      MD(h_dim+1:2*h_dim, h_dim+1:2*h_dim) = 0.0_r64
 
-        call cpu_time(t0)
-        call qao_omegasdlp_r64(ms, nterms, ncoeff, h_dim, txn, Ichi, Ialpha, &
-                               om_slp, om)
-        call cpu_time(t1c);  timeinfo(7) = timeinfo(7) + (t1c - t0)
+      Atmp = Oadd
+      MD   = transpose(MD)
+      call dgesv(4_8*h_dim, ms, MD, 4_8*h_dim, ipiv4, Atmp, 4_8*h_dim, info)
 
-        call cpu_time(t0)
-        fac = 1.0_r64/(4.0_r64*pi)/alpha
-        Ocl = fac*om_slp
-        Oadd(        1:  h_dim, :) =  om(:,:,1)
-        Oadd(  h_dim+1:2*h_dim, :) = -om(:,:,2)
-        Oadd(2*h_dim+1:3*h_dim, :) = -om(:,:,3)
-        Oadd(3*h_dim+1:4*h_dim, :) = -om(:,:,4)
-        Oadd = -fac*Oadd
+      Otmp = Ocl + matmul(transpose(Fm), Atmp(1:h_dim,:))
+      Msl  = transpose(Msl)
+      call dgesv(h_dim, ms, Msl, h_dim, ipiv1, Otmp, h_dim, info)
 
-        Msl = Mmatrix(      1:  h_dim,       1:  h_dim)
-        Fm = Mmatrix(h_dim+1:2*h_dim, h_dim+1:2*h_dim)
-        MD = Mmatrix
-        MD(      1:  h_dim,       1:  h_dim) = 0.0_r64
-        MD(h_dim+1:2*h_dim, h_dim+1:2*h_dim) = 0.0_r64
+      do j = 1, ms
+        As(idxs(j),:)           = Otmp(:,j)
+        Ad(idxs(j),:)           = alpha*Atmp(1:h_dim,j)
+        Omega(:,idxs(j))        = Oadd(:,j)
+        IalphaAsvestas(idxs(j)) = Ias(j)
+      end do
+      call cpu_time(t1c);  timeinfo(8) = timeinfo(8) + (t1c - t0)
 
-        Atmp = Oadd
-        MD   = transpose(MD)
-        call dgesv(4_8*h_dim, ms, MD, 4_8*h_dim, ipiv4, Atmp, 4_8*h_dim, info)
-
-        Otmp = Ocl + matmul(transpose(Fm), Atmp(1:h_dim,:))
-        Msl  = transpose(Msl)
-        call dgesv(h_dim, ms, Msl, h_dim, ipiv1, Otmp, h_dim, info)
-
-        do j = 1, ms
-          As(idxs(j),:)           = Otmp(:,j)
-          Ad(idxs(j),:)           = alpha*Atmp(1:h_dim,j)
-          Omega(:,idxs(j))        = Oadd(:,j)
-          IalphaAsvestas(idxs(j)) = Ias(j)
-        end do
-        call cpu_time(t1c);  timeinfo(8) = timeinfo(8) + (t1c - t0)
-      end block
+      deallocate(txn, w1, w3, w5, troot, xr, yr, zr, xrr, yrr, zrr)
+      deallocate(rfc, rfc_ssq, idxnp, Fx, Fy, Fz, Ichi, Ialpha)
+      deallocate(Ias, om_slp, om, Ocl, Oadd, Atmp, MD, Msl, Fm, Otmp)
+      deallocate(ipiv4, ipiv1)
     end if
 
     call clear_patch_levels_r64(lv)

@@ -3,7 +3,16 @@ export interface SolverWasmModule {
   _malloc(bytes: number): number;
   _free(pointer: number): void;
   _solver_clear(): void;
-  _solver_run(mp: bigint, np: bigint, order: bigint, surface: bigint, restol: number): number;
+  _solver_simplex_precomp(
+    nquad: bigint, korder: bigint, kpols: bigint,
+    tgl: number, wgl: number, Dgl: number, wBclag: number,
+    Legmat: number, umatr: number, vmatr: number,
+  ): number;
+  _solver_run(
+    mp: bigint, np: bigint, order: bigint, surface: bigint, restol: number,
+    tgl: number, wgl: number, Dgl: number, wBclag: number,
+    Legmat: number, umatr: number, vmatr: number,
+  ): number;
   _solver_result_nsrc(): bigint | number;
   _solver_result_nrender(): bigint | number;
   _solver_result_ntriangles(): bigint | number;
@@ -22,6 +31,17 @@ export interface SolverWasmModule {
     aux1: bigint,
     value: number,
   ) => void;
+}
+
+export interface SimplexPrecomp {
+  readonly tgl: number;
+  readonly wgl: number;
+  readonly Dgl: number;
+  readonly wBclag: number;
+  readonly Legmat: number;
+  readonly umatr: number;
+  readonly vmatr: number;
+  dispose(): void;
 }
 
 export interface RawSolverResult {
@@ -52,6 +72,49 @@ export function requireStatus(
 ): void {
   if (status !== 0) {
     throw new SolverStatusError(phase, status, lastError());
+  }
+}
+
+export function createSimplexPrecomp(
+  wasm: SolverWasmModule,
+  order: number,
+): SimplexPrecomp {
+  const nquad = order + 2;
+  const korder = order - 1;
+  const kpols = order * (order + 1) / 2;
+  const pointers: number[] = [];
+  const allocate = (count: number, name: string): number => {
+    const pointer = wasm._malloc(8 * count);
+    if (!pointer) throw new Error(`${name}: WASM allocation failed`);
+    pointers.push(pointer);
+    return pointer;
+  };
+
+  try {
+    const tgl = allocate(nquad, 'tgl');
+    const wgl = allocate(nquad, 'wgl');
+    const Dgl = allocate(nquad * nquad, 'Dgl');
+    const wBclag = allocate(nquad, 'w_bclag');
+    const Legmat = allocate(nquad * nquad, 'Legmat');
+    const umatr = allocate(kpols * kpols, 'umatr');
+    const vmatr = allocate(kpols * kpols, 'vmatr');
+    requireStatus('simplex precomputation', wasm._solver_simplex_precomp(
+      BigInt(nquad), BigInt(korder), BigInt(kpols),
+      tgl, wgl, Dgl, wBclag, Legmat, umatr, vmatr,
+    ), () => wasm._solver_last_error());
+
+    let disposed = false;
+    return {
+      tgl, wgl, Dgl, wBclag, Legmat, umatr, vmatr,
+      dispose() {
+        if (disposed) return;
+        disposed = true;
+        for (let i = pointers.length - 1; i >= 0; --i) wasm._free(pointers[i]!);
+      },
+    };
+  } catch (error) {
+    for (let i = pointers.length - 1; i >= 0; --i) wasm._free(pointers[i]!);
+    throw error;
   }
 }
 

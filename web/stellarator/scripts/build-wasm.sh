@@ -136,7 +136,7 @@ if [[ $WASM_PROGRESS == 1 ]]; then
   PROGRESS_LINK_OBJS=("$BUILD_DIR/wasm_progress_bridge.o")
 fi
 
-EXPORTED="['_solver_run','_solver_result_nsrc','_solver_result_nrender','_solver_result_ntriangles','_solver_result_grf_error','_solver_copy_sx','_solver_copy_snx','_solver_copy_sw','_solver_copy_ub','_solver_copy_ubn','_solver_copy_u','_solver_copy_render_xyz','_solver_copy_render_log_error','_solver_copy_render_triangles','_solver_last_error','_solver_clear','_malloc','_free']"
+EXPORTED="['_solver_simplex_precomp','_solver_run','_solver_result_nsrc','_solver_result_nrender','_solver_result_ntriangles','_solver_result_grf_error','_solver_copy_sx','_solver_copy_snx','_solver_copy_sw','_solver_copy_ub','_solver_copy_ubn','_solver_copy_u','_solver_copy_render_xyz','_solver_copy_render_log_error','_solver_copy_render_triangles','_solver_last_error','_solver_clear','_malloc','_free']"
 
 "$EMCC" "$WASM_OPT" "$WASM_DEBUG" "$PATH_MAP" -std=c11 -D_GNU_SOURCE -ffp-contract=off \
   "${SANITIZER_FLAGS[@]}" \

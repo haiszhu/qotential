@@ -20,6 +20,52 @@ function require(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function createSimplexPrecomp(order) {
+  const nquad = order + 2;
+  const korder = order - 1;
+  const kpols = order * (order + 1) / 2;
+  const counts = [nquad, nquad, nquad * nquad, nquad,
+    nquad * nquad, kpols * kpols, kpols * kpols];
+  const pointers = [];
+  try {
+    for (const count of counts) {
+      const pointer = wasm._malloc(8 * count);
+      require(pointer !== 0, 'simplex precomputation malloc failed');
+      pointers.push(pointer);
+    }
+    const status = wasm._solver_simplex_precomp(
+      BigInt(nquad), BigInt(korder), BigInt(kpols), ...pointers,
+    );
+    require(status === 0,
+      `simplex precomputation failed: ${status}/${wasm._solver_last_error()}`);
+    const values = pointers.map((pointer, i) =>
+      new Float64Array(wasm.HEAPU8.buffer, pointer, counts[i]).slice());
+    for (const field of values)
+      require(field.every(Number.isFinite), 'non-finite simplex precomputation value');
+    const tgl = values[0], wgl = values[1];
+    require(tgl.every((value, i) => value > -1 && value < 1 &&
+      (i === 0 || value > tgl[i - 1])), 'tgl is not strictly increasing in (-1,1)');
+    require(Math.abs(wgl.reduce((sum, value) => sum + value, 0) - 2) < 1e-14,
+      'Gauss weights do not sum to 2');
+    let disposed = false;
+    return {
+      pointers, values,
+      dispose() {
+        if (disposed) return;
+        disposed = true;
+        for (let i = pointers.length - 1; i >= 0; --i) wasm._free(pointers[i]);
+      },
+    };
+  } catch (error) {
+    for (let i = pointers.length - 1; i >= 0; --i) wasm._free(pointers[i]);
+    throw error;
+  }
+}
+
+function solverRun(refs, ...args) {
+  return wasm._solver_run(...args, ...refs.pointers);
+}
+
 function parseFixture(filename) {
   const blob = fs.readFileSync(filename);
   require(blob.subarray(0, 8).toString('ascii') === 'STGRF001', 'bad fixture magic');
@@ -52,25 +98,34 @@ function parseFixture(filename) {
 const truth = parseFixture(fixturePath);
 const order6Truth = parseFixture(order6FixturePath);
 const w7xTruth = parseFixture(w7xFixturePath);
+const refs4 = createSimplexPrecomp(4);
+const refs4Repeat = createSimplexPrecomp(4);
+const refs6 = createSimplexPrecomp(6);
+for (let field = 0; field < refs4.values.length; ++field) {
+  require(refs4.values[field].every(
+    (value, index) => value === refs4Repeat.values[field][index]),
+  `order-4 simplex precomputation field ${field} is not deterministic`);
+}
+refs4Repeat.dispose();
 
 function callStage(name, ...args) {
   const status = wasm[name](...args);
   require(status === 0, `${name} failed: status=${status} last=${wasm._solver_last_error()}`);
 }
 
-require(wasm._solver_run(0n, 36n, 4n, 0n, 0.1) === 105,
+require(solverRun(refs4, 0n, 36n, 4n, 0n, 0.1) === 105,
         'solver must reject a non-positive discretization');
 wasm._solver_clear();
-require(wasm._solver_run(
+require(solverRun(refs4,
   BigInt(Number.MAX_SAFE_INTEGER), 52n, 4n, 0n, 0.1,
 ) === 105,
         'solver must reject overflowing derived result extents');
 wasm._solver_clear();
-require(wasm._solver_run(4n, 12n, 5n, 0n, 0.1) === 106,
+require(solverRun(refs4, 4n, 12n, 5n, 0n, 0.1) === 106,
         'solver must reject an unsupported odd order');
 wasm._solver_clear();
 
-callStage('_solver_run', 12n, 36n, 6n, 0n, 0.1);
+callStage('_solver_run', 12n, 36n, 6n, 0n, 0.1, ...refs6.pointers);
 const order6Nsrc = Number(wasm._solver_result_nsrc());
 const order6Nrender = Number(wasm._solver_result_nrender());
 const order6Nfaces = Number(wasm._solver_result_ntriangles());
@@ -111,23 +166,23 @@ console.log('WASM_ORDER6_SMOKE_OK',
             `renderLogMaxAbs=${order6LogMetric.maxAbs}`);
 wasm._solver_clear();
 
-callStage('_solver_run', 4n, 12n, 4n, 0n, 0.1);
+callStage('_solver_run', 4n, 12n, 4n, 0n, 0.1, ...refs4.pointers);
 require(Number(wasm._solver_result_nsrc()) === 1360,
         `4x12 source count=${wasm._solver_result_nsrc()}, expected 1360`);
 wasm._solver_clear();
 
-require(wasm._solver_run(12n, 36n, 4n, 2n, 0.1) === 107,
+require(solverRun(refs4, 12n, 36n, 4n, 2n, 0.1) === 107,
         'solver must reject an unknown surface id');
 wasm._solver_clear();
-require(wasm._solver_run(12n, 36n, 4n, 1n, 0.0) === 108,
+require(solverRun(refs4, 12n, 36n, 4n, 1n, 0.0) === 108,
         'solver must reject a non-positive W7-X restol');
 wasm._solver_clear();
-require(wasm._solver_run(12n, 36n, 4n, 1n, Number.NaN) === 108,
+require(solverRun(refs4, 12n, 36n, 4n, 1n, Number.NaN) === 108,
         'solver must reject a non-finite W7-X restol');
 wasm._solver_clear();
 
 if (process.env.WASM_SKIP_W7X !== '1') {
-  callStage('_solver_run', 12n, 36n, 6n, 1n, 0.1);
+  callStage('_solver_run', 12n, 36n, 6n, 1n, 0.1, ...refs6.pointers);
   const w7xNsrc = Number(wasm._solver_result_nsrc());
   const w7xNrender = Number(wasm._solver_result_nrender());
   const w7xNfaces = Number(wasm._solver_result_ntriangles());
@@ -221,7 +276,7 @@ function collect() {
 
 function runOnce() {
   wasm._solver_clear();
-  callStage('_solver_run', 12n, 36n, 4n, 0n, 0.1);
+  callStage('_solver_run', 12n, 36n, 4n, 0n, 0.1, ...refs4.pointers);
   return collect();
 }
 
@@ -331,6 +386,8 @@ if (process.env.WASM_PRINT_FIELD_HASHES === '1') {
     console.log('WASM_FIELD_SHA256', name, hashF64(first.fields[name]));
   }
   wasm._solver_clear();
+  refs4.dispose();
+  refs6.dispose();
   process.exit(0);
 }
 if (process.env.WASM_DIAGNOSTIC === '1') {
@@ -350,6 +407,8 @@ if (process.env.WASM_DIAGNOSTIC === '1') {
   }
   console.log('WASM_GRF_DIAG', first.grfError);
   wasm._solver_clear();
+  refs4.dispose();
+  refs6.dispose();
   process.exit(0);
 }
 const firstMetrics = compareRun('run1', first);
@@ -358,6 +417,8 @@ if (process.env.WASM_SINGLE_RUN === '1') {
   console.log('WASM_SINGLE_RUN_OK', `nsrc=${truth.nsrc}`, `nrender=${truth.nrender}`,
               `grf=${first.grfError}`);
   wasm._solver_clear();
+  refs4.dispose();
+  refs6.dispose();
   process.exit(0);
 }
 
@@ -370,7 +431,7 @@ for (const name of Object.keys(first.fields)) {
           `${name}: repeated WASM run differs`);
 }
 wasm._solver_clear();
-callStage('_solver_run', 12n, 36n, 4n, 0n, 0.1);
+callStage('_solver_run', 12n, 36n, 4n, 0n, 0.1, ...refs4.pointers);
 const convenience = collect();
 const convenienceMemory = wasm.HEAPU8.buffer.byteLength;
 compareRun('convenience', convenience);
@@ -388,7 +449,7 @@ wasm._solver_clear();
 // phase, the exact stage ordering, and a single result event whose value is the
 // solver's own returned GRF.  This is a durable characterization of the final
 // WASM artifact, not a re-derivation of any numerical quantity.
-function captureProgress(runArgs) {
+function captureProgress(refs, runArgs) {
   const events = [];
   wasm.onSolverProgress = (stage, current, total, aux0, aux1, value) => {
     events.push({
@@ -401,7 +462,7 @@ function captureProgress(runArgs) {
     });
   };
   try {
-    callStage('_solver_run', ...runArgs);
+    callStage('_solver_run', ...runArgs, ...refs.pointers);
   } finally {
     delete wasm.onSolverProgress;
   }
@@ -437,7 +498,7 @@ function requireLongPhase(events, progressStage, label) {
   return progress[progress.length - 1];
 }
 
-const progressEvents = captureProgress([12n, 36n, 4n, 0n, 0.1]);
+const progressEvents = captureProgress(refs4, [12n, 36n, 4n, 0n, 0.1]);
 const progressGrf = wasm._solver_result_grf_error();
 const progressNsrc = Number(wasm._solver_result_nsrc());
 
@@ -487,7 +548,7 @@ wasm._solver_clear();
 wasm.onSolverProgress = () => { throw new Error('progress handler intentionally throws'); };
 let throwingStatus;
 try {
-  throwingStatus = wasm._solver_run(12n, 36n, 4n, 0n, 0.1);
+  throwingStatus = solverRun(refs4, 12n, 36n, 4n, 0n, 0.1);
 } finally {
   delete wasm.onSolverProgress;
 }
@@ -502,3 +563,5 @@ console.log('WASM_PROGRESS_ORDER_OK',
             `directBlocks=${directFinal.total}`,
             `ntri=${countFinal.total}`,
             `grf=${result.value}`);
+refs4.dispose();
+refs6.dispose();

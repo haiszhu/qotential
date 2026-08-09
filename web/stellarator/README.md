@@ -273,6 +273,25 @@ make app
 TypeScript tests, and creates the static site in `dist/`. It does not run the
 long numerical parity suite.
 
+The browser owns the seven simplex-precomputation buffers explicitly. For each
+solve it allocates `tgl`, `wgl`, `Dgl`, `w_bclag`, `Legmat`, `umatr`, and
+`vmatr`; calls `_solver_simplex_precomp` once; passes the same pointers to
+`_solver_run`; and frees every buffer in `finally`. The Fortran, C ABI, and
+worker therefore use the same caller-owned interface. Any change to that
+interface or its Fortran/C implementation requires rebuilding both
+`public/wasm/solver.js` and `public/wasm/solver.wasm`.
+
+The native `rrq_r64` entry point, `qol_rrq_mex`, the stage-by-stage MATLAB
+`qol_rrq.m`, and the browser solver all require this same simplex input set.
+
+The explicit workspace `deallocate` calls in `rrq_r64` and
+`build_closepanel_precomp_r64` are currently part of the WASM correctness
+contract. Standard Fortran automatically finalizes local allocatables when a
+procedure returns, but the pinned LFortran C backend does not yet do so
+reliably. Do not remove those calls without rebuilding the module and running
+`WASM_SKIP_W7X=1 node test/wasm-api-node.mjs`; that gate performs repeated
+solves and rejects continued WASM-memory growth after warmup.
+
 Before committing regenerated prebuilt artifacts, refresh and verify their
 checksum manifest:
 
@@ -531,7 +550,7 @@ The parameterized scalar browser case now crosses the entire pipeline:
 
 ```text
 shared real Fortran core
-    -> patched LFortran C backend (69,975 generated C lines)
+    -> patched LFortran C backend (72,213 generated C lines)
     -> explicit descriptor/layout and scalar BLAS adapters
     -> Emscripten solver.wasm
     -> atomic Web Worker API

@@ -3,6 +3,7 @@
 import type { WorkerRequest, WorkerResponse } from './data-schema';
 import {
   collectSolverResult,
+  createSimplexPrecomp,
   loadSolverModule,
   requireStatus,
   SolverStatusError,
@@ -61,13 +62,20 @@ scope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       sink: (line) => send({ type: 'log', requestId: request.requestId, line }),
     });
     const solveModule = wasm;
-    withSolverProgress(solveModule, forwarder, () => {
-      requireStatus(`order-${request.order} ${request.surface} solve`,
-        solveModule._solver_run(
-          BigInt(request.mp), BigInt(request.np), BigInt(request.order),
-          BigInt(request.surface === 'w7x' ? 1 : 0), request.restol,
-        ), lastError);
-    });
+    const refs = createSimplexPrecomp(solveModule, request.order);
+    try {
+      withSolverProgress(solveModule, forwarder, () => {
+        requireStatus(`order-${request.order} ${request.surface} solve`,
+          solveModule._solver_run(
+            BigInt(request.mp), BigInt(request.np), BigInt(request.order),
+            BigInt(request.surface === 'w7x' ? 1 : 0), request.restol,
+            refs.tgl, refs.wgl, refs.Dgl, refs.wBclag,
+            refs.Legmat, refs.umatr, refs.vmatr,
+          ), lastError);
+      });
+    } finally {
+      refs.dispose();
+    }
     progress(request.requestId, 'Preparing the render mesh');
     // Measure elapsed AFTER result assembly, matching the pre-progress metric
     // scope and the design's "after _solver_run and collectSolverResult() both

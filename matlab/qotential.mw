@@ -47,34 +47,152 @@ Ac         = zeros(m_tgt, npat);
 # FORTRAN qol_lap3ddlp_closepanel_mex(int[1] m_tgt, double[3,m_tgt] t_x, int[1] npat, double[3,npat] s_x, int[1] order, int[1] ref, double[1] if_adapt_d, inout double[m_tgt,npat] Ac);
 end
 
-@function [S_ij, K_ij, Omegas, IalphaAsvestas, timeinfo] = qol_rrq_mex(m, tx, iside, order, h_dim, nquad, n, sx, sw, snx, rts, rps, orderff, distff, isimd, ichart, sxbd_chart, rv_chart, S_ij, K_ij, Omegas, IalphaAsvestas, timeinfo)
+@function [As, Ad, Omega, IalphaAsvestas, timeinfo] = qol_rrq_mex(m, tx, n, sx, snx, sw, rts, rps, order, nquad, orderff, distff, exterior, isimd, ichart, sxbd_chart, rv_chart, tgl, wgl, Dgl, w_bclag, Legmat, umatr, vmatr, As, Ad, Omega, IalphaAsvestas, timeinfo)
 m       = double(m);
 n       = double(n);
-iside   = double(iside);
 order   = double(order);
-h_dim   = double(h_dim);
 nquad   = double(nquad);
 orderff = double(orderff);
 isimd   = double(isimd);
 distff  = double(distff);
+exterior = double(logical(exterior));
 tx  = double(reshape(tx,  3, m));
 sx  = double(reshape(sx,  3, n));
 snx = double(reshape(snx, 3, n));
 rts = double(reshape(rts, 3, n));
 rps = double(reshape(rps, 3, n));
 sw  = double(sw(:));
+h_dim = order*(order+1)/2;
+if nargin < 25 || isempty(As), As = zeros(m, n); end
+if nargin < 26 || isempty(Ad), Ad = zeros(m, n); end
+if nargin < 27 || isempty(Omega), Omega = zeros(4*h_dim, m); end
+if nargin < 28 || isempty(IalphaAsvestas), IalphaAsvestas = zeros(m, 1); end
+if nargin < 29 || isempty(timeinfo), timeinfo = zeros(20, 1); end
 nbd = 3*nquad;
-if nargin < 16 || isempty(ichart), ichart = 0; end
-if nargin < 17 || isempty(sxbd_chart), sxbd_chart = zeros(3, nbd); end
-if nargin < 18 || isempty(rv_chart), rv_chart = zeros(3, 3); end
 ichart = double(ichart);
 sxbd_chart = double(reshape(sxbd_chart, 3, nbd));
 rv_chart   = double(reshape(rv_chart, 3, 3));
-if nargin < 19 || isempty(S_ij), S_ij = zeros(m, n); end
-if nargin < 20 || isempty(K_ij), K_ij = zeros(m, n); end
-if nargin < 21 || isempty(Omegas), Omegas = zeros(4*h_dim, m); end
-if nargin < 22 || isempty(IalphaAsvestas), IalphaAsvestas = zeros(m, 1); end
-if nargin < 23 || isempty(timeinfo), timeinfo = zeros(20, 1); end
-mh = 4*h_dim;   % Omegas is (4*h_dim, m); mwrap needs a plain name here
-# FORTRAN qol_rrq_mex(int[1] m, double[3,m] tx, int[1] iside, int[1] order, int[1] h_dim, int[1] nquad, int[1] n, double[3,n] sx, double[n] sw, double[3,n] snx, double[3,n] rts, double[3,n] rps, int[1] orderff, double[1] distff, int[1] isimd, int[1] ichart, double[3,nbd] sxbd_chart, double[3,3] rv_chart, inout double[m,n] S_ij, inout double[m,n] K_ij, inout double[mh,m] Omegas, inout double[m] IalphaAsvestas, inout double[20] timeinfo);
+tgl = double(reshape(tgl, nquad, 1));
+wgl = double(reshape(wgl, nquad, 1));
+Dgl = double(reshape(Dgl, nquad, nquad));
+w_bclag = double(reshape(w_bclag, nquad, 1));
+Legmat = double(reshape(Legmat, nquad, nquad));
+umatr = double(reshape(umatr, h_dim, h_dim));
+vmatr = double(reshape(vmatr, h_dim, h_dim));
+mh = 4*h_dim;
+# FORTRAN qol_rrq_mex(int[1] m, double[3,m] tx, int[1] n, double[3,n] sx, double[3,n] snx, double[n] sw, double[3,n] rts, double[3,n] rps, int[1] order, int[1] nquad, int[1] orderff, double[1] distff, int[1] exterior, int[1] isimd, int[1] ichart, double[3,nbd] sxbd_chart, double[3,3] rv_chart, double[nquad] tgl, double[nquad] wgl, double[nquad,nquad] Dgl, double[nquad] w_bclag, double[nquad,nquad] Legmat, double[h_dim,h_dim] umatr, double[h_dim,h_dim] vmatr, inout double[m,n] As, inout double[m,n] Ad, inout double[mh,m] Omega, inout double[m] IalphaAsvestas, inout double[20] timeinfo);
+end
+
+@function [tgl, wgl, Dgl, w_bclag, Legmat, umatr, vmatr] = qol_simplex_precomp_mex(nquad, korder, kpols, tgl, wgl, Dgl, w_bclag, Legmat, umatr, vmatr)
+nquad = double(nquad);
+korder = double(korder);
+kpols = double(kpols);
+if nargin < 4 || isempty(tgl), tgl = zeros(nquad, 1); end
+if nargin < 5 || isempty(wgl), wgl = zeros(nquad, 1); end
+if nargin < 6 || isempty(Dgl), Dgl = zeros(nquad, nquad); end
+if nargin < 7 || isempty(w_bclag), w_bclag = zeros(nquad, 1); end
+if nargin < 8 || isempty(Legmat), Legmat = zeros(nquad, nquad); end
+if nargin < 9 || isempty(umatr), umatr = zeros(kpols, kpols); end
+if nargin < 10 || isempty(vmatr), vmatr = zeros(kpols, kpols); end
+# FORTRAN qol_simplex_precomp_mex(int[1] nquad, int[1] korder, int[1] kpols, inout double[nquad] tgl, inout double[nquad] wgl, inout double[nquad,nquad] Dgl, inout double[nquad] w_bclag, inout double[nquad,nquad] Legmat, inout double[kpols,kpols] umatr, inout double[kpols,kpols] vmatr);
+end
+
+@function [lv, ier] = qol_build_patch_levels_mex(korder, npols, sx, rts, rps, order, dist, nlevel, lv, ier)
+korder = double(korder);
+npols = double(npols);
+order = double(order);
+nlevel = double(nlevel);
+dist = double(dist);
+sx = double(reshape(sx, 3, npols));
+rts = double(reshape(rts, 3, npols));
+rps = double(reshape(rps, 3, npols));
+if nargin < 9 || isempty(lv), lv = 0; end
+if nargin < 10 || isempty(ier), ier = 0; end
+# FORTRAN qol_build_patch_levels_mex(int[1] korder, int[1] npols, double[3,npols] sx, double[3,npols] rts, double[3,npols] rps, int[1] order, double[1] dist, int[1] nlevel, inout uint64_t[1] lv, inout int[1] ier);
+end
+
+@function [As, Ad, idxs, ms, ier] = qol_lap3dsdlpmat_levels_mex(m, tx, npols, lv, isimd, As, Ad, idxs, ms, ier)
+m = double(m);
+npols = double(npols);
+lv = double(lv);
+isimd = double(isimd);
+tx = double(reshape(tx, 3, m));
+if nargin < 6 || isempty(As), As = zeros(m, npols); end
+if nargin < 7 || isempty(Ad), Ad = zeros(m, npols); end
+if nargin < 8 || isempty(idxs), idxs = zeros(m, 1); end
+if nargin < 9 || isempty(ms), ms = 0; end
+if nargin < 10 || isempty(ier), ier = 0; end
+# FORTRAN qol_lap3dsdlpmat_levels_mex(int[1] m, double[3,m] tx, int[1] npols, uint64_t[1] lv, int[1] isimd, inout double[m,npols] As, inout double[m,npols] Ad, inout int[m] idxs, inout int[1] ms, inout int[1] ier);
+end
+
+@function [ier] = qol_clear_patch_levels_mex(lv, ier)
+lv = double(lv);
+if nargin < 2 || isempty(ier), ier = 0; end
+# FORTRAN qol_clear_patch_levels_mex(uint64_t[1] lv, inout int[1] ier);
+end
+
+@function [ier] = qol_clear_patch_levels_all_mex(ier)
+if nargin < 1 || isempty(ier), ier = 0; end
+# FORTRAN qol_clear_patch_levels_all_mex(inout int[1] ier);
+end
+
+@function [R, c, sxbd, swbd, stangbd, sspbd, qhat, Fbd, Fxbd, Fybd, Fzbd, Mmatrix] = qol_build_closepanel_precomp_mex(n, sx, snx, sw, r_vert, nterms, h_dim, nbd, sbdnp, nquad, alpha, exterior, ichart, sxbd_chart, tgl, wgl, Dgl, umatr, R, c, sxbd, swbd, stangbd, sspbd, qhat, Fbd, Fxbd, Fybd, Fzbd, Mmatrix)
+n = double(n);
+nterms = double(nterms);
+h_dim = double(h_dim);
+nbd = double(nbd);
+sbdnp = double(sbdnp);
+nquad = double(nquad);
+alpha = double(alpha);
+exterior = double(logical(exterior));
+ichart = double(ichart);
+sx = double(reshape(sx, 3, n));
+snx = double(reshape(snx, 3, n));
+sw = double(sw(:));
+r_vert = double(reshape(r_vert, 3, 3));
+sxbd_chart = double(reshape(sxbd_chart, 3, nbd));
+nsq = (nterms+1)^2;
+mh = 4*h_dim;
+tgl = double(reshape(tgl, nquad, 1));
+wgl = double(reshape(wgl, nquad, 1));
+Dgl = double(reshape(Dgl, nquad, nquad));
+umatr = double(reshape(umatr, h_dim, h_dim));
+if nargin < 19 || isempty(R), R = zeros(3, 3); end
+if nargin < 20 || isempty(c), c = zeros(3, 1); end
+if nargin < 21 || isempty(sxbd), sxbd = zeros(3, nbd); end
+if nargin < 22 || isempty(swbd), swbd = zeros(nbd, 1); end
+if nargin < 23 || isempty(stangbd), stangbd = zeros(3, nbd); end
+if nargin < 24 || isempty(sspbd), sspbd = zeros(nbd, 1); end
+if nargin < 25 || isempty(qhat), qhat = zeros(3, 1); end
+if nargin < 26 || isempty(Fbd), Fbd = complex(zeros(nbd, nsq)); end
+if nargin < 27 || isempty(Fxbd), Fxbd = complex(zeros(nbd, nsq)); end
+if nargin < 28 || isempty(Fybd), Fybd = complex(zeros(nbd, nsq)); end
+if nargin < 29 || isempty(Fzbd), Fzbd = complex(zeros(nbd, nsq)); end
+if nargin < 30 || isempty(Mmatrix), Mmatrix = zeros(mh, mh); end
+# FORTRAN qol_build_closepanel_precomp_mex(int[1] n, double[3,n] sx, double[3,n] snx, double[n] sw, double[3,3] r_vert, int[1] nterms, int[1] h_dim, int[1] nbd, int[1] sbdnp, int[1] nquad, double[1] alpha, int[1] exterior, int[1] ichart, double[3,nbd] sxbd_chart, double[nquad] tgl, double[nquad] wgl, double[nquad,nquad] Dgl, double[h_dim,h_dim] umatr, inout double[3,3] R, inout double[3] c, inout double[3,nbd] sxbd, inout double[nbd] swbd, inout double[3,nbd] stangbd, inout double[nbd] sspbd, inout double[3] qhat, inout dcomplex[nbd,nsq] Fbd, inout dcomplex[nbd,nsq] Fxbd, inout dcomplex[nbd,nsq] Fybd, inout dcomplex[nbd,nsq] Fzbd, inout double[mh,mh] Mmatrix);
+end
+
+@function [Ichi, Ialpha] = qol_build_tc_chialpha_mex(m, r0, nbd, sbdnp, nquad, ncoeff, sxbd, stangbd, sspbd, w1, w3, Fx, Fy, Fz, IalphaAsvestas, Ichi, Ialpha)
+m = double(m);
+nbd = double(nbd);
+sbdnp = double(sbdnp);
+nquad = double(nquad);
+ncoeff = double(ncoeff);
+nsm = sbdnp*m;
+nc4 = 4*ncoeff;
+r0 = double(reshape(r0, 3, m));
+sxbd = double(reshape(sxbd, 3, nbd));
+stangbd = double(reshape(stangbd, 3, nbd));
+sspbd = double(sspbd(:));
+w1 = double(reshape(w1, nquad, nsm));
+w3 = double(reshape(w3, nquad, nsm));
+Fx = double(reshape(Fx, nbd, ncoeff));
+Fy = double(reshape(Fy, nbd, ncoeff));
+Fz = double(reshape(Fz, nbd, ncoeff));
+IalphaAsvestas = double(IalphaAsvestas(:));
+if nargin < 16 || isempty(Ichi), Ichi = complex(zeros(m, nc4)); end
+if nargin < 17 || isempty(Ialpha), Ialpha = complex(zeros(m, nc4)); end
+# FORTRAN qol_build_tc_chialpha_mex(int[1] m, double[3,m] r0, int[1] nbd, int[1] sbdnp, int[1] nquad, int[1] ncoeff, double[3,nbd] sxbd, double[3,nbd] stangbd, double[nbd] sspbd, double[nquad,nsm] w1, double[nquad,nsm] w3, dcomplex[nbd,ncoeff] Fx, dcomplex[nbd,ncoeff] Fy, dcomplex[nbd,ncoeff] Fz, double[m] IalphaAsvestas, inout dcomplex[m,nc4] Ichi, inout dcomplex[m,nc4] Ialpha);
+Ichi = reshape(Ichi, m, ncoeff, 4);
+Ialpha = reshape(Ialpha, m, ncoeff, 4);
 end

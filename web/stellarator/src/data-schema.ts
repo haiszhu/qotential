@@ -26,7 +26,8 @@ export type FmmTolerance = (typeof SUPPORTED_FMM_TOLERANCES)[number];
 export type WorkerRequest = {
   type: 'run';
   requestId: number;
-  moduleUrl: string;
+  wasm32ModuleUrl: string;
+  wasm64ModuleUrl: string;
   mp: number;
   np: number;
   order: SolverOrder;

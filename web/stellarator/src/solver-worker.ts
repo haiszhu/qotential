@@ -10,12 +10,14 @@ import {
   type SolverWasmModule,
 } from './wasm-loader';
 import { createProgressForwarder, withSolverProgress } from './progress-log';
+import { createSolverRuntimeSelector } from './memory64';
 import { toSolverDataset } from './worker-utils';
 
 const scope: DedicatedWorkerGlobalScope = self as unknown as DedicatedWorkerGlobalScope;
 let running = false;
 let modulePromise: Promise<SolverWasmModule> | undefined;
 let loadedUrl = '';
+const selectRuntime = createSolverRuntimeSelector();
 
 function send(message: WorkerResponse, transfer: Transferable[] = []): void {
   scope.postMessage(message, transfer);
@@ -46,7 +48,12 @@ scope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   let wasm: SolverWasmModule | undefined;
   try {
     progress(request.requestId, 'Loading Fortran WebAssembly runtime');
-    wasm = await solverFor(request.moduleUrl);
+    const runtime = await selectRuntime({
+      wasm32ModuleUrl: request.wasm32ModuleUrl,
+      wasm64ModuleUrl: request.wasm64ModuleUrl,
+    });
+    send({ type: 'log', requestId: request.requestId, line: runtime.logLine });
+    wasm = await solverFor(runtime.moduleUrl);
     const lastError = () => wasm!._solver_last_error();
 
     // The generated core exposes one atomic solve. Keep the
@@ -65,7 +72,7 @@ scope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       sink: (line) => send({ type: 'log', requestId: request.requestId, line }),
     });
     const solveModule = wasm;
-    const refs = createSimplexPrecomp(solveModule, request.order);
+    const refs = createSimplexPrecomp(solveModule, request.order, runtime.pointerBits);
     try {
       withSolverProgress(solveModule, forwarder, () => {
         requireStatus(`order-${request.order} ${request.surface} solve`,
@@ -84,7 +91,7 @@ scope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
     // Measure elapsed AFTER result assembly, matching the pre-progress metric
     // scope and the design's "after _solver_run and collectSolverResult() both
     // succeed" — the buffer copies count toward the reported browser-solve time.
-    const rawResult = collectSolverResult(wasm);
+    const rawResult = collectSolverResult(wasm, runtime.pointerBits);
     const elapsedMs = performance.now() - started;
     const data = toSolverDataset(rawResult, elapsedMs);
     // One extra truthful line after both the solve and result assembly succeed;

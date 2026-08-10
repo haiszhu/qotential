@@ -146,9 +146,13 @@ runButton.addEventListener('click', () => {
   }
   placeholder.hidden = true;
   setState('running', 'Starting WebAssembly worker');
-  const moduleUrl = new URL(`${import.meta.env.BASE_URL}wasm/solver.js`, document.baseURI).href;
+  const wasm32ModuleUrl = new URL(
+    `${import.meta.env.BASE_URL}wasm/solver.js`, document.baseURI).href;
+  const wasm64ModuleUrl = new URL(
+    `${import.meta.env.BASE_URL}wasm/solver64.js`, document.baseURI).href;
   worker.postMessage({
-    type: 'run', requestId: activeRequest, moduleUrl, ...discretization, order,
+    type: 'run', requestId: activeRequest, wasm32ModuleUrl, wasm64ModuleUrl,
+    ...discretization, order,
     surface, restol, kernel, fmmTolerance,
   });
 });

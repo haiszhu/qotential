@@ -5,17 +5,32 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(here, '..');
-const moduleUrl = pathToFileURL(path.join(webRoot, 'public/wasm/solver.js')).href;
-const wasmPath = path.join(webRoot, 'public/wasm/solver.wasm');
+const artifact = process.env.WASM_ARTIFACT || 'solver';
+const pointerBits = Number(process.env.WASM_POINTER_BITS || 32);
+requirePointerBits(pointerBits);
+const moduleUrl = pathToFileURL(path.join(webRoot, `public/wasm/${artifact}.js`)).href;
+const wasmPath = path.join(webRoot, `public/wasm/${artifact}.wasm`);
 const fixturePath = process.env.WASM_FIXTURE ||
   path.join(webRoot, 'fixtures/native/order4-direct.bin');
 const order6FixturePath = path.join(webRoot, 'fixtures/native/order6-direct.bin');
 const w7xFixturePath = path.join(webRoot, 'fixtures/native/w7x-order6-direct.bin');
 const fmmFixtureDir = process.env.WASM_FMM_FIXTURE_DIR;
+const requestedFmmCases = process.env.WASM_FMM_CASES
+  ? new Set(process.env.WASM_FMM_CASES.split(',').filter(Boolean))
+  : undefined;
 
 if (!fs.statSync(wasmPath).size) throw new Error('empty solver.wasm');
 const { default: createSolver } = await import(moduleUrl);
 const wasm = await createSolver({ wasmBinary: fs.readFileSync(wasmPath) });
+
+function requirePointerBits(bits) {
+  if (bits !== 32 && bits !== 64) throw new Error(`WASM_POINTER_BITS must be 32 or 64: ${bits}`);
+}
+
+function pointerArgument(offset) {
+  require(Number.isSafeInteger(offset) && offset >= 0, `invalid heap offset: ${offset}`);
+  return pointerBits === 64 ? BigInt(offset) : offset;
+}
 
 function require(condition, message) {
   if (!condition) throw new Error(message);
@@ -28,19 +43,21 @@ function createSimplexPrecomp(order) {
   const counts = [nquad, nquad, nquad * nquad, nquad,
     nquad * nquad, kpols * kpols, kpols * kpols];
   const pointers = [];
+  const offsets = [];
   try {
     for (const count of counts) {
       const pointer = wasm._malloc(8 * count);
       require(pointer !== 0, 'simplex precomputation malloc failed');
-      pointers.push(pointer);
+      offsets.push(pointer);
+      pointers.push(pointerArgument(pointer));
     }
     const status = wasm._solver_simplex_precomp(
       BigInt(nquad), BigInt(korder), BigInt(kpols), ...pointers,
     );
     require(status === 0,
       `simplex precomputation failed: ${status}/${wasm._solver_last_error()}`);
-    const values = pointers.map((pointer, i) =>
-      new Float64Array(wasm.HEAPU8.buffer, pointer, counts[i]).slice());
+    const values = offsets.map((offset, i) =>
+      new Float64Array(wasm.HEAPU8.buffer, offset, counts[i]).slice());
     for (const field of values)
       require(field.every(Number.isFinite), 'non-finite simplex precomputation value');
     const tgl = values[0], wgl = values[1];
@@ -252,11 +269,11 @@ function copyF64(name, count) {
   const pointer = wasm._malloc(bytes);
   require(pointer !== 0, `${name}: malloc failed`);
   try {
-    const status = wasm[name](pointer, BigInt(count));
+    const status = wasm[name](pointerArgument(pointer), BigInt(count));
     require(status === 0, `${name} failed: ${status}`);
     return new Float64Array(wasm.HEAPU8.buffer, pointer, count).slice();
   } finally {
-    wasm._free(pointer);
+    wasm._free(pointerArgument(pointer));
   }
 }
 
@@ -265,11 +282,11 @@ function copyI64(name, count) {
   const pointer = wasm._malloc(bytes);
   require(pointer !== 0, `${name}: malloc failed`);
   try {
-    const status = wasm[name](pointer, BigInt(count));
+    const status = wasm[name](pointerArgument(pointer), BigInt(count));
     require(status === 0, `${name} failed: ${status}`);
     return new BigInt64Array(wasm.HEAPU8.buffer, pointer, count).slice();
   } finally {
-    wasm._free(pointer);
+    wasm._free(pointerArgument(pointer));
   }
 }
 
@@ -497,7 +514,14 @@ if (fmmFixtureDir) {
       direct: w7xTruth, wasmDirect: w7xDirectWasm, eps: 1e-6,
     },
   ];
-  for (const testCase of fmmCases) {
+  const selectedFmmCases = requestedFmmCases
+    ? fmmCases.filter((testCase) => requestedFmmCases.has(testCase.label))
+    : fmmCases;
+  if (requestedFmmCases) {
+    require(selectedFmmCases.length === requestedFmmCases.size,
+      `unknown WASM_FMM_CASES value: ${process.env.WASM_FMM_CASES}`);
+  }
+  for (const testCase of selectedFmmCases) {
     const nativeFmm = parseFixture(path.join(fmmFixtureDir, testCase.file));
     const limit = 20 * testCase.eps;
     require(testCase.wasmDirect,
@@ -559,11 +583,15 @@ if (fmmFixtureDir) {
       `${testCase.label}: cross-toolchain FMM effect error ` +
       `${effectMetric.fieldScaled} > ${limit}`);
     console.log('WASM_FMM_PARITY_OK', testCase.label,
+                `ntri=${nativeFmm.ntri}`,
+                `nsrc=${nativeFmm.nsrc}`,
                 `uNativeDirect=${nativeDirect.fieldScaled}`,
                 `uWasmDirect=${wasmDirect.fieldScaled}`,
                 `effect=${effectMetric.fieldScaled}`,
                 `rawCrossToolchain=${wasmNativeRaw.fieldScaled}`,
-                `grf=${wasmFmm.grfError}`);
+                `nativeGrf=${nativeFmm.grfError}`,
+                `wasmGrf=${wasmFmm.grfError}`,
+                `heap=${wasm.HEAPU8.buffer.byteLength}`);
     wasm._solver_clear();
   }
 }

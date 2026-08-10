@@ -50,8 +50,10 @@ def validate(path: Path) -> tuple[int, int, int, int, float]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--fixture-dir", type=Path, required=True)
+    parser.add_argument("--case", action="append", choices=CASES,
+                        dest="cases", help="validate only the named fixture")
     args = parser.parse_args()
-    for name in CASES:
+    for name in args.cases or CASES:
         path = args.fixture_dir / name
         if not path.is_file():
             raise SystemExit(f"missing native FMM fixture: {path}")

@@ -1,27 +1,29 @@
 export interface SolverWasmModule {
   HEAPU8: Uint8Array;
   _malloc(bytes: number): number;
-  _free(pointer: number): void;
+  _free(pointer: WasmPointer): void;
   _solver_clear(): void;
   _solver_simplex_precomp(
     nquad: bigint, korder: bigint, kpols: bigint,
-    tgl: number, wgl: number, Dgl: number, wBclag: number,
-    Legmat: number, umatr: number, vmatr: number,
+    tgl: WasmPointer, wgl: WasmPointer, Dgl: WasmPointer,
+    wBclag: WasmPointer, Legmat: WasmPointer,
+    umatr: WasmPointer, vmatr: WasmPointer,
   ): number;
   _solver_run(
     mp: bigint, np: bigint, order: bigint, surface: bigint, restol: number,
     kernel: bigint, fmmTolerance: number,
-    tgl: number, wgl: number, Dgl: number, wBclag: number,
-    Legmat: number, umatr: number, vmatr: number,
+    tgl: WasmPointer, wgl: WasmPointer, Dgl: WasmPointer,
+    wBclag: WasmPointer, Legmat: WasmPointer,
+    umatr: WasmPointer, vmatr: WasmPointer,
   ): number;
   _solver_result_nsrc(): bigint | number;
   _solver_result_nrender(): bigint | number;
   _solver_result_ntriangles(): bigint | number;
   _solver_result_grf_error(): number;
   _solver_last_error(): number;
-  _solver_copy_render_xyz(pointer: number, capacity: bigint): number;
-  _solver_copy_render_log_error(pointer: number, capacity: bigint): number;
-  _solver_copy_render_triangles(pointer: number, capacity: bigint): number;
+  _solver_copy_render_xyz(pointer: WasmPointer, capacity: bigint): number;
+  _solver_copy_render_log_error(pointer: WasmPointer, capacity: bigint): number;
+  _solver_copy_render_triangles(pointer: WasmPointer, capacity: bigint): number;
   // Installed per solve by the Worker; invoked from the EM_JS progress bridge.
   // With -sWASM_BIGINT=1 the four i64 payloads arrive as bigint.
   onSolverProgress?: (
@@ -34,14 +36,52 @@ export interface SolverWasmModule {
   ) => void;
 }
 
+export type WasmPointer = number | bigint;
+export type PointerBits = 32 | 64;
+
+export function pointerArgument(offset: number, bits: PointerBits): WasmPointer {
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new RangeError(`invalid WASM heap offset: ${offset}`);
+  }
+  return bits === 64 ? BigInt(offset) : offset;
+}
+
+export function checkedHeapOffset(pointer: WasmPointer): number {
+  if (typeof pointer === 'number') {
+    if (!Number.isSafeInteger(pointer) || pointer < 0) {
+      throw new RangeError(`invalid WASM pointer result: ${pointer}`);
+    }
+    return pointer;
+  }
+  if (pointer < 0n || pointer > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new RangeError(`wasm64 pointer is outside the safe offset range: ${pointer}`);
+  }
+  return Number(pointer);
+}
+
+export function requireHeapRange(
+  wasm: Pick<SolverWasmModule, 'HEAPU8'>,
+  offset: number,
+  byteLength: number,
+): void {
+  if (!Number.isSafeInteger(byteLength) || byteLength < 0 ||
+      !Number.isSafeInteger(offset) || offset < 0 ||
+      offset > wasm.HEAPU8.buffer.byteLength ||
+      byteLength > wasm.HEAPU8.buffer.byteLength - offset) {
+    throw new RangeError(
+      `WASM heap range ${offset}+${byteLength} exceeds ${wasm.HEAPU8.buffer.byteLength}`,
+    );
+  }
+}
+
 export interface SimplexPrecomp {
-  readonly tgl: number;
-  readonly wgl: number;
-  readonly Dgl: number;
-  readonly wBclag: number;
-  readonly Legmat: number;
-  readonly umatr: number;
-  readonly vmatr: number;
+  readonly tgl: WasmPointer;
+  readonly wgl: WasmPointer;
+  readonly Dgl: WasmPointer;
+  readonly wBclag: WasmPointer;
+  readonly Legmat: WasmPointer;
+  readonly umatr: WasmPointer;
+  readonly vmatr: WasmPointer;
   dispose(): void;
 }
 
@@ -79,14 +119,16 @@ export function requireStatus(
 export function createSimplexPrecomp(
   wasm: SolverWasmModule,
   order: number,
+  pointerBits: PointerBits = 32,
 ): SimplexPrecomp {
   const nquad = order + 2;
   const korder = order - 1;
   const kpols = order * (order + 1) / 2;
-  const pointers: number[] = [];
-  const allocate = (count: number, name: string): number => {
-    const pointer = wasm._malloc(8 * count);
-    if (!pointer) throw new Error(`${name}: WASM allocation failed`);
+  const pointers: WasmPointer[] = [];
+  const allocate = (count: number, name: string): WasmPointer => {
+    const offset = wasm._malloc(8 * count);
+    if (!offset) throw new Error(`${name}: WASM allocation failed`);
+    const pointer = pointerArgument(offset, pointerBits);
     pointers.push(pointer);
     return pointer;
   };
@@ -128,15 +170,18 @@ export async function loadSolverModule(moduleUrl: string): Promise<SolverWasmMod
 
 function copyF64(
   wasm: SolverWasmModule,
+  pointerBits: PointerBits,
   count: number,
-  copy: (pointer: number, capacity: bigint) => number,
+  copy: (pointer: WasmPointer, capacity: bigint) => number,
   name: string,
 ): Float64Array {
-  const pointer = wasm._malloc(8 * count);
-  if (!pointer) throw new Error(`${name}: WASM allocation failed`);
+  const offset = wasm._malloc(8 * count);
+  if (!offset) throw new Error(`${name}: WASM allocation failed`);
+  const pointer = pointerArgument(offset, pointerBits);
   try {
     requireStatus(name, copy(pointer, BigInt(count)), () => wasm._solver_last_error());
-    return new Float64Array(wasm.HEAPU8.buffer, pointer, count).slice();
+    requireHeapRange(wasm, offset, 8 * count);
+    return new Float64Array(wasm.HEAPU8.buffer, offset, count).slice();
   } finally {
     wasm._free(pointer);
   }
@@ -144,21 +189,27 @@ function copyF64(
 
 function copyI64(
   wasm: SolverWasmModule,
+  pointerBits: PointerBits,
   count: number,
-  copy: (pointer: number, capacity: bigint) => number,
+  copy: (pointer: WasmPointer, capacity: bigint) => number,
   name: string,
 ): BigInt64Array {
-  const pointer = wasm._malloc(8 * count);
-  if (!pointer) throw new Error(`${name}: WASM allocation failed`);
+  const offset = wasm._malloc(8 * count);
+  if (!offset) throw new Error(`${name}: WASM allocation failed`);
+  const pointer = pointerArgument(offset, pointerBits);
   try {
     requireStatus(name, copy(pointer, BigInt(count)), () => wasm._solver_last_error());
-    return new BigInt64Array(wasm.HEAPU8.buffer, pointer, count).slice();
+    requireHeapRange(wasm, offset, 8 * count);
+    return new BigInt64Array(wasm.HEAPU8.buffer, offset, count).slice();
   } finally {
     wasm._free(pointer);
   }
 }
 
-export function collectSolverResult(wasm: SolverWasmModule): RawSolverResult {
+export function collectSolverResult(
+  wasm: SolverWasmModule,
+  pointerBits: PointerBits = 32,
+): RawSolverResult {
   const nsrc = Number(wasm._solver_result_nsrc());
   const nrender = Number(wasm._solver_result_nrender());
   const nfaces = Number(wasm._solver_result_ntriangles());
@@ -170,11 +221,11 @@ export function collectSolverResult(wasm: SolverWasmModule): RawSolverResult {
     nrender,
     nfaces,
     grfError: wasm._solver_result_grf_error(),
-    positions: copyF64(wasm, 3 * nrender,
+    positions: copyF64(wasm, pointerBits, 3 * nrender,
       wasm._solver_copy_render_xyz.bind(wasm), 'copy positions'),
-    logError: copyF64(wasm, nrender,
+    logError: copyF64(wasm, pointerBits, nrender,
       wasm._solver_copy_render_log_error.bind(wasm), 'copy log error'),
-    triangles: copyI64(wasm, 3 * nfaces,
+    triangles: copyI64(wasm, pointerBits, 3 * nfaces,
       wasm._solver_copy_render_triangles.bind(wasm), 'copy triangles'),
   };
 }

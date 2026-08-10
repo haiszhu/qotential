@@ -12,7 +12,7 @@ flowchart LR
     G["Production stellarator geometry C"] --> EM["Emscripten final link"]
     API --> LC["LFortran C backend"] --> EM
     B["Scalar BLAS/LAPACK ABI shims"] --> EM
-    EM --> W["solver.wasm"] --> WK["Web Worker"]
+    EM --> W["solver.wasm / solver64.wasm"] --> WK["Web Worker"]
     WK --> UI["Button-driven WebGPU page"]
     UI --> E["Surface color = log10(error)"]
 ```
@@ -52,6 +52,8 @@ qotential/
         │   └── generate-w7x-modes.py
         ├── patches/
         │   ├── fort2c-allocate-stat.patch
+        │   ├── fort2c-real-complex-kind.patch
+        │   ├── lfortran-wasm64-float128-symbols.patch
         │   └── lfortran-c-backend.patch
         ├── test/
         │   ├── data-schema.test.ts
@@ -99,10 +101,10 @@ below a repository subpath as well as at a domain root.
 
 ## Manually deploy to GitHub Pages
 
-The public repository carries checksum-pinned prebuilt `solver.js` and
-`solver.wasm` files. GitHub does not rebuild Fortran, run Emscripten, or run
-the numerical tests during deployment. The deployment workflow only verifies
-the committed checksums, builds the static TypeScript/Vite page, and publishes
+The public repository carries checksum-pinned wasm32 and wasm64 loader/module pairs.
+GitHub does not rebuild Fortran, run Emscripten, or run the numerical tests
+during deployment. The deployment workflow only verifies the four committed
+artifact checksums, builds the static TypeScript/Vite page, and publishes
 `dist/`.
 
 The workflow has only a `workflow_dispatch` trigger, so a commit or push does
@@ -121,6 +123,7 @@ Useful numerical gates are:
 
 ```sh
 LF=/path/to/patched/lfortran make parity
+LF=/path/to/patched/lfortran make parity64
 LF=/path/to/patched/lfortran make sanitize
 ```
 
@@ -252,16 +255,19 @@ git -C "$HOME/git/FMM3D" describe --tags --always
 ```
 
 fort2c is pinned because its generated ABI is part of this build. Install the
-checked commit after applying the repository's allocation-status patch. Run
+checked commit after applying both repository patches: one preserves allocation
+failure status and the other preserves `REAL(COMPLEX*16)` precision. Run
 these commands from this README's directory:
 
 ```sh
 git clone https://github.com/magland/fort2c.git "$HOME/fort2c"
 git -C "$HOME/fort2c" checkout 7f7fda827260df4f7ff1bfcaf1c420e3e809ac7b
 git -C "$HOME/fort2c" apply "$PWD/patches/fort2c-allocate-stat.patch"
-uv tool install --force --python 3.12 "$HOME/fort2c"
+git -C "$HOME/fort2c" apply "$PWD/patches/fort2c-real-complex-kind.patch"
+uv tool install --force --python 3.12 --editable "$HOME/fort2c"
 fort2c --version
 bash test/fort2c-allocate-stat.test.sh
+bash test/fort2c-real-complex-kind.test.sh
 ```
 
 If `fort2c` is not found after installation, run `uv tool update-shell`, open
@@ -282,6 +288,7 @@ LF=~/lfortran/build/src/bin/lfortran \
 LLVM_NM="$(brew --prefix llvm)/bin/llvm-nm" \
 EM_CACHE="$HOME/.cache/biesolver-emscripten" \
 FMM3D_SRC="$HOME/git/FMM3D" \
+FORT2C_SRC="$HOME/fort2c" \
 FORT2C="$(command -v fort2c)" \
   make serve
 ```
@@ -303,16 +310,33 @@ Emscripten is deliberately *not* version-pinned the way LFortran and fort2c
 are; 6.0.6 is what this was verified against. If a future release changes its
 cache layout or system-library build, this step is where it will show.
 
-The final `solver.wasm` is one module. LFortran translates the qotential and
+The wasm32 `solver.wasm` and Memory64 `solver64.wasm` each contain the same
+solver. LFortran translates the qotential and
 geometry-side Fortran to C; fort2c translates only the serial FMM3D Common and
 Laplace closure; Emscripten compiles and links both C families. gfortran is
 used for the independent native FMM3D and solver references, while native
 Clang validates fort2c output before the same generated C is sent through
 Emscripten. Neither gfortran nor native Clang is embedded in the browser.
 
-`public/wasm/`, `build-wasm/`, `dist/`, and `node_modules/` are generated and
-ignored. The native truth fixture under `fixtures/native/` is versioned input
-to the parity test, not browser output.
+The pinned `public/wasm/solver.js`, `solver.wasm`, `solver64.js`,
+`solver64.wasm`, `SHA256SUMS`, and `PROVENANCE.txt` files are versioned
+deployment inputs. Other content under `public/wasm/`, together with the
+architecture-specific build directories, `dist/`, and `node_modules/`, is
+generated and ignored. The
+native truth fixture under `fixtures/native/` is versioned input to the parity
+test, not browser output.
+
+At startup a fresh Worker validates and instantiates a minimal Memory64 module.
+Desktop Chrome builds that support it load `solver64`; other browsers load
+`solver`. The log states exactly which runtime was selected. If Memory64 is
+supported but `solver64` is missing, corrupt, or fails numerically, the page
+reports that error and does not silently retry with wasm32.
+
+The first Memory64 build uses a 128 MiB initial memory and V8's current 16 GiB
+maximum. Memory64 changes pointer width; it does not remove the browser's heap
+ceiling. The measured order-12 `48 × 144` case approaches that ceiling, so it
+is a stress case rather than an ordinary acceptance test. The larger order-12
+`60 × 180` case is outside this first operating envelope.
 
 ## Rebuilding after source changes
 
@@ -326,6 +350,7 @@ export LF="$HOME/lfortran/build/src/bin/lfortran"
 export LLVM_NM="$(brew --prefix llvm)/bin/llvm-nm"
 export EM_CACHE="$HOME/.cache/biesolver-emscripten"
 export FMM3D_SRC="$HOME/git/FMM3D"
+export FORT2C_SRC="$HOME/fort2c"
 export FORT2C="$(command -v fort2c)"
 ```
 
@@ -337,19 +362,26 @@ npm ci
 make app
 ```
 
-`make app` regenerates `public/wasm/solver.js` and `solver.wasm`, runs the
+`make app` regenerates both wasm32 and wasm64 loader/module pairs, atomically
+refreshes their four-entry checksum manifest and provenance, runs the
 TypeScript tests, and creates the static site in `dist/`. It does not run the
-long numerical parity suite.
+long numerical parity suite. Use `make wasm` or `make wasm64` for a focused
+single-architecture rebuild; those targets publish only their own JS/WASM pair
+and deliberately leave `SHA256SUMS` unchanged. Run `make artifacts` before
+delivery to rebuild and bind both pairs together.
 
-The FMM3D Common/Laplace translation is cached in
-`build-fmm3d/libfmm3d-wasm.a`. Its stamp covers the FMM3D commit, manifest and
-source hashes, fort2c command/version and patch digest, runtime header,
-Emscripten version, and FMM compile flags. A normal `make wasm` reports
+The FMM3D Common/Laplace translation is cached separately in
+`build-fmm3d-wasm32/libfmm3d-wasm.a` and
+`build-fmm3d-wasm64/libfmm3d-wasm.a`. Each stamp covers architecture, the
+FMM3D commit, manifest and source hashes, the deterministic fort2c source-tree
+digest and both patch digests, runtime header, Emscripten version, and FMM
+compile flags. A normal `make wasm` or `make wasm64` reports
 `FMM3D_WASM_CACHE_HIT` when none of those inputs changed. Force only that
 translation to rebuild with:
 
 ```sh
 FMM3D_REBUILD=1 make wasm
+FMM3D_REBUILD=1 make wasm64
 ```
 
 Useful focused checks, ordered from the translator boundary to the complete
@@ -357,10 +389,12 @@ solver, are:
 
 ```sh
 make fmm3d-test
+make memory64-test
 bash test/fmm3d-fort2c-native.test.sh  # fort2c C compiled by native Clang
 bash test/fmm3d-fort2c-wasm.test.sh    # same closure compiled by Emscripten
 WASM_SKIP_W7X=1 node test/wasm-api-node.mjs
 make parity                            # includes the longer W7-X FMM gate
+make parity64                          # built-in order-6 native/wasm64 gate
 ```
 
 The native reference for the original FMM3D checkout is separate from these
@@ -374,7 +408,7 @@ solve it allocates `tgl`, `wgl`, `Dgl`, `w_bclag`, `Legmat`, `umatr`, and
 `_solver_run`; and frees every buffer in `finally`. The Fortran, C ABI, and
 worker therefore use the same caller-owned interface. Any change to that
 interface or its Fortran/C implementation requires rebuilding both
-`public/wasm/solver.js` and `public/wasm/solver.wasm`.
+architecture pairs with `make artifacts`.
 
 The native `rrq_r64` entry point, `qol_rrq_mex`, the stage-by-stage MATLAB
 `qol_rrq.m`, and the browser solver all require this same simplex input set.
@@ -387,26 +421,26 @@ reliably. Do not remove those calls without rebuilding the module and running
 `WASM_SKIP_W7X=1 node test/wasm-api-node.mjs`; that gate performs repeated
 solves and rejects continued WASM-memory growth after warmup.
 
-Before committing regenerated prebuilt artifacts, refresh and verify their
-checksum manifest:
+Before committing regenerated prebuilt artifacts, build and verify both
+architectures together:
 
 ```sh
-cd public/wasm
-shasum -a 256 solver.js solver.wasm > SHA256SUMS
-shasum -a 256 --check SHA256SUMS
-cd ../..
+make artifacts
+(cd public/wasm && shasum -a 256 --check SHA256SUMS)
+test -s public/wasm/PROVENANCE.txt
 ```
 
-Commit the two solver artifacts and `SHA256SUMS` together. A manual Pages
-deployment refuses to publish them if the checksum verification fails.
+Commit all four solver artifacts, `SHA256SUMS`, and `PROVENANCE.txt` together.
+A manual Pages deployment refuses to publish them if checksum verification
+fails.
 
 Use the smallest rebuild that matches the files changed:
 
 | Changed files | Required action |
 |---|---|
 | `index.html`, `src/*.ts`, or `src/style.css` | A running `npm run dev` rebuilds the front end automatically; run `npm run build` before delivery. |
-| Fortran in `fortran/`, the qotential/QuatApproximation/LineQuaaadrature source closure, `native/*.c`, `native/*.h`, or the WASM ABI/build scripts | Run `make wasm`, then reload the page. Add any new LFortran module to `fortran/wasm_sources.txt` in dependency order. |
-| FMM3D checkout/source, `fortran/fmm3d_wasm_sources.txt`, fort2c command/patch, `native/fmm3d_c.h`, or FMM compile flags | Run `make wasm`; its cache stamp rebuilds `libfmm3d-wasm.a` automatically. Use `FMM3D_REBUILD=1 make wasm` to rule out a suspect cache. |
+| Fortran in `fortran/`, the qotential/QuatApproximation/LineQuaaadrature source closure, `native/*.c`, `native/*.h`, or the WASM ABI/build scripts | Run `make wasm` and/or `make wasm64` for local iteration, then `make artifacts` before delivery. Add any new LFortran module to `fortran/wasm_sources.txt` in dependency order. |
+| FMM3D checkout/source, `fortran/fmm3d_wasm_sources.txt`, fort2c source/patches, `native/fmm3d_c.h`, or FMM compile flags | Rebuild the affected architecture; its cache stamp rebuilds the matching archive automatically. Use `FMM3D_REBUILD=1 make wasm` or `make wasm64` to rule out a suspect cache. |
 | `patches/lfortran-c-backend.patch` or `scripts/build-lfortran.sh` | Run `scripts/build-lfortran.sh "$HOME/lfortran"` first, then `make wasm`. If the pinned LFortran commit changed, update the LFortran checkout to the commit recorded by that script before rebuilding. |
 | `package.json` or `package-lock.json` | Run `npm ci`, followed by `npm test` and `npm run build`. |
 | Native fixtures or numerical reference values | Regenerate them only through the documented native parity workflow, review the numerical change, then run the full parity gate. Do not update a fixture merely to make a failing test pass. |
@@ -431,14 +465,16 @@ npm ci
 make app
 ```
 
-If the pull changed the LFortran patch or its pinned commit, update/rebuild the
-compiler as described in the table before running `make app`.
+If the pull changed the LFortran or fort2c patches or either pinned commit,
+update/rebuild that tool as described above. If only LFortran changed, rebuild
+the compiler as described in the table. Then run `make app`.
 
 ### Confirming that the browser uses the new WASM
 
-`solver.wasm` is loaded once per Web Worker. A Worker that has already run the
-solver keeps its instantiated module, so rebuilding the file alone does not
-replace the module in that Worker. After `make wasm`:
+The selected solver module is loaded once per Web Worker. A Worker that has
+already run the solver keeps its instantiated module, so rebuilding the file
+alone does not replace the module in that Worker. After rebuilding either
+architecture:
 
 1. reload the page so it creates a new Worker;
 2. use a hard reload if the browser still shows old behavior; and
@@ -450,7 +486,8 @@ stages, check whether the generated JavaScript contains the progress bridge:
 
 ```sh
 printf 'WASM_PROGRESS=%s\n' "${WASM_PROGRESS-<unset>}"
-if grep -q 'function biesolver_progress' public/wasm/solver.js; then
+if grep -q 'function biesolver_progress' public/wasm/solver.js && \
+   grep -q 'function biesolver_progress' public/wasm/solver64.js; then
   echo BRIDGE_PRESENT
 else
   echo BRIDGE_MISSING
@@ -493,14 +530,16 @@ For an objective check, compare the artifact hash before and after rebuilding:
 
 ```sh
 shasum -a 256 public/wasm/solver.wasm
-make wasm
-shasum -a 256 public/wasm/solver.wasm
+shasum -a 256 public/wasm/solver64.wasm
+make artifacts
+shasum -a 256 public/wasm/solver.wasm public/wasm/solver64.wasm
 ```
 
-A changed solver input normally changes the hash. An unchanged hash means the
+A changed solver input normally changes the corresponding wasm32/wasm64 hash.
+An unchanged hash means the
 edit did not reach the generated WASM path, or it was excluded by the active
 preprocessor configuration. Inspect `fortran/wasm_sources.txt`, the generated
-`build-wasm/stellarator_solver.c`, and the build flags before assuming the
+architecture-specific `stellarator_solver.c`, and the build flags before assuming the
 browser cache is responsible.
 
 For the production site, rebuild `dist/` after rebuilding WASM and verify that
@@ -509,6 +548,7 @@ Vite copied the same binary:
 ```sh
 npm run build
 cmp public/wasm/solver.wasm dist/wasm/solver.wasm
+cmp public/wasm/solver64.wasm dist/wasm/solver64.wasm
 ```
 
 Then serve locally with `npm run dev`, or inspect the production bundle with
@@ -522,6 +562,7 @@ Before merging or deploying a numerical change, run the complete gate:
 
 ```sh
 make parity
+make parity64
 ```
 
 ## Toolchain acknowledgements
@@ -533,7 +574,8 @@ This port depends directly on [LFortran](https://github.com/lfortran/lfortran),
 qotential/geometry-side Fortran dependency closure to C. fort2c translates the
 serial FMM3D Common and Laplace closure. Emscripten compiles and links both C
 families, the LFortran runtime, the production geometry C, and the explicit
-ABI/layout shims into one `solver.wasm` and its JavaScript loader. FMM3D and
+ABI/layout shims into the wasm32 and wasm64 solver modules and their JavaScript
+loaders. FMM3D and
 fort2c are Apache-2.0 projects; distribution notices belong in
 `public/THIRD_PARTY_NOTICES.txt`.
 

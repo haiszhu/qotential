@@ -15,8 +15,17 @@ LF_ARRAY_BOUNDS_CHECK=${LF_ARRAY_BOUNDS_CHECK:-0}
 WASM_SANITIZE=${WASM_SANITIZE:-}
 WASM_STACK_SIZE=${WASM_STACK_SIZE:-67108864}
 WASM_PROGRESS=${WASM_PROGRESS:-1}
+WASM_MEMORY64=${WASM_MEMORY64:-0}
+
+sha256_file() {
+  shasum -a 256 "$1" | awk '{print $1}'
+}
 if [[ $WASM_PROGRESS != 0 && $WASM_PROGRESS != 1 ]]; then
   echo "WASM_PROGRESS must be 0 or 1 (got '$WASM_PROGRESS')" >&2
+  exit 1
+fi
+if [[ $WASM_MEMORY64 != 0 && $WASM_MEMORY64 != 1 ]]; then
+  echo "WASM_MEMORY64 must be 0 or 1 (got '$WASM_MEMORY64')" >&2
   exit 1
 fi
 LF_BIN=$(command -v "$LF" 2>/dev/null || printf '%s\n' "$LF")
@@ -31,18 +40,41 @@ if [[ -z ${LF_SRC:-} ]]; then
   LF_SRC=$(cd "$(dirname "$LF_BIN")/../../.." && pwd)
 fi
 RUNTIME_DIR="$LF_SRC/src/libasr/runtime"
+LFORTRAN_WASM64_PATCH="$WEB_ROOT/patches/lfortran-wasm64-float128-symbols.patch"
 if [[ ! -f $RUNTIME_DIR/lfortran_intrinsics.h || ! -f $RUNTIME_DIR/lfortran_intrinsics.c ]]; then
   echo "no LFortran runtime headers under $RUNTIME_DIR" >&2
   echo "LF_SRC was derived as $LF_SRC from LF=$LF_BIN; it must be the LFortran" >&2
   echo "source tree.  Point LF at <source>/build/src/bin/lfortran, or set LF_SRC." >&2
   exit 1
 fi
+test -f "$LFORTRAN_WASM64_PATCH" || {
+  echo "missing LFortran wasm64 runtime patch: $LFORTRAN_WASM64_PATCH" >&2
+  exit 1
+}
 
-BUILD_DIR="$WEB_ROOT/build-wasm"
+if [[ $WASM_MEMORY64 == 1 ]]; then
+  architecture=wasm64
+  BUILD_DIR="$WEB_ROOT/build-wasm64"
+  FMM3D_BUILD_DIR="$WEB_ROOT/build-fmm3d-wasm64"
+  OUTPUT_BASENAME=solver64
+else
+  architecture=wasm32
+  BUILD_DIR="$WEB_ROOT/build-wasm32"
+  FMM3D_BUILD_DIR="$WEB_ROOT/build-fmm3d-wasm32"
+  OUTPUT_BASENAME=solver
+fi
 MOD_DIR="$BUILD_DIR/modules"
-PUBLIC_DIR="$WEB_ROOT/public/wasm"
+PUBLIC_DIR=${PUBLIC_DIR:-$WEB_ROOT/public/wasm}
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR" "$MOD_DIR" "$PUBLIC_DIR"
+
+EMCC_FLAGS=("$WASM_OPT")
+if [[ -n $WASM_DEBUG ]]; then
+  EMCC_FLAGS+=("$WASM_DEBUG")
+fi
+if [[ $WASM_MEMORY64 == 1 ]]; then
+  EMCC_FLAGS+=(-m64)
+fi
 
 CPP_FLAGS=(
   --cpp --no-style-suggestions --legacy-array-sections
@@ -98,7 +130,9 @@ if [[ -n $WASM_SANITIZE ]]; then
   FMM3D_CFLAGS_EXTRA="-fsanitize=$WASM_SANITIZE"
 fi
 FMM3D_SRC="${FMM3D_SRC:-$HOME/git/FMM3D}" FORT2C="${FORT2C:-fort2c}" \
+  FORT2C_SRC="${FORT2C_SRC:-$HOME/fort2c}" \
   EMCC="$EMCC" EMAR="$EMAR" \
+  WASM_MEMORY64="$WASM_MEMORY64" FMM3D_BUILD_DIR="$FMM3D_BUILD_DIR" \
   FMM3D_CFLAGS_EXTRA="$FMM3D_CFLAGS_EXTRA" \
   "$WEB_ROOT/scripts/build-fmm3d-wasm.sh"
 SOLVER_CC_FLAGS=(
@@ -111,7 +145,7 @@ if [[ $WASM_ALLOC_TRACE == 1 ]]; then
     -Dfree=biesolver_debug_free
   )
 fi
-"$EMCC" "$WASM_OPT" "$WASM_DEBUG" "$PATH_MAP" -std=c11 -ffp-contract=off -I"$RUNTIME_DIR" \
+"$EMCC" "${EMCC_FLAGS[@]}" "$PATH_MAP" -std=c11 -ffp-contract=off -I"$RUNTIME_DIR" \
   "${SANITIZER_FLAGS[@]}" \
   "${SOLVER_CC_FLAGS[@]}" \
   -c "$SOLVER_C" -o "$BUILD_DIR/stellarator_solver.o"
@@ -131,7 +165,7 @@ if grep -Ei 'lq_csimd|csimd|omp_get_|__kmpc|GOMP_|cpu_time|system_clock' \
   exit 1
 fi
 
-"$EMCC" "$WASM_OPT" "$WASM_DEBUG" "$PATH_MAP" -std=c11 -ffp-contract=off \
+"$EMCC" "${EMCC_FLAGS[@]}" "$PATH_MAP" -std=c11 -ffp-contract=off \
   "${SANITIZER_FLAGS[@]}" -I"$WEB_ROOT/native" \
   -c "$WEB_ROOT/native/fmm3d_layout_adapter.c" \
   -o "$BUILD_DIR/fmm3d_layout_adapter.o"
@@ -144,13 +178,20 @@ if [[ $adapter_raw_count != 1 ]]; then
   exit 1
 fi
 
-"$EMCC" "$WASM_OPT" "$WASM_DEBUG" "$PATH_MAP" -std=c11 -D_GNU_SOURCE -I"$LF_SRC/src" -I"$RUNTIME_DIR" \
+RUNTIME_BUILD_DIR="$BUILD_DIR/lfortran-runtime"
+mkdir -p "$RUNTIME_BUILD_DIR"
+cp "$RUNTIME_DIR/lfortran_intrinsics.c" "$RUNTIME_BUILD_DIR/"
+cp "$RUNTIME_DIR/lfortran_float128.c" "$RUNTIME_BUILD_DIR/"
+cp "$RUNTIME_DIR/lfortran_float128_llvm.h" "$RUNTIME_BUILD_DIR/"
+patch -s -d "$RUNTIME_BUILD_DIR" -p1 < "$LFORTRAN_WASM64_PATCH"
+
+"$EMCC" "${EMCC_FLAGS[@]}" "$PATH_MAP" -std=c11 -D_GNU_SOURCE -I"$LF_SRC/src" -I"$RUNTIME_DIR" \
   "${SANITIZER_FLAGS[@]}" \
   -D_lfortran_get_default_allocator=_lfortran_runtime_get_default_allocator \
   -D_lfortran_malloc_alloc=_lfortran_runtime_malloc_alloc \
   -D_lfortran_free_alloc=_lfortran_runtime_free_alloc \
-  -c "$RUNTIME_DIR/lfortran_intrinsics.c" -o "$BUILD_DIR/lfortran_intrinsics.o"
-"$EMCC" "$WASM_OPT" "$WASM_DEBUG" "$PATH_MAP" -std=c11 "${SANITIZER_FLAGS[@]}" \
+  -c "$RUNTIME_BUILD_DIR/lfortran_intrinsics.c" -o "$BUILD_DIR/lfortran_intrinsics.o"
+"$EMCC" "${EMCC_FLAGS[@]}" "$PATH_MAP" -std=c11 "${SANITIZER_FLAGS[@]}" \
   -c "$WEB_ROOT/native/wasm_lfortran_alloc.c" \
   -o "$BUILD_DIR/wasm_lfortran_alloc.o"
 
@@ -159,7 +200,7 @@ fi
 # import; it is never added to EXPORTED_FUNCTIONS.
 PROGRESS_LINK_OBJS=()
 if [[ $WASM_PROGRESS == 1 ]]; then
-  "$EMCC" "$WASM_OPT" "$WASM_DEBUG" "$PATH_MAP" -std=c11 "${SANITIZER_FLAGS[@]}" \
+  "$EMCC" "${EMCC_FLAGS[@]}" "$PATH_MAP" -std=c11 "${SANITIZER_FLAGS[@]}" \
     -c "$WEB_ROOT/native/wasm_progress_bridge.c" \
     -o "$BUILD_DIR/wasm_progress_bridge.o"
   test -s "$BUILD_DIR/wasm_progress_bridge.o"
@@ -168,7 +209,14 @@ fi
 
 EXPORTED="['_solver_simplex_precomp','_solver_run','_solver_result_nsrc','_solver_result_nrender','_solver_result_ntriangles','_solver_result_grf_error','_solver_copy_sx','_solver_copy_snx','_solver_copy_sw','_solver_copy_ub','_solver_copy_ubn','_solver_copy_u','_solver_copy_render_xyz','_solver_copy_render_log_error','_solver_copy_render_triangles','_solver_last_error','_solver_clear','_malloc','_free']"
 
-"$EMCC" "$WASM_OPT" "$WASM_DEBUG" "$PATH_MAP" -std=c11 -D_GNU_SOURCE -ffp-contract=off \
+MEMORY_LINK_FLAGS=(-sALLOW_MEMORY_GROWTH=1)
+if [[ $WASM_MEMORY64 == 1 ]]; then
+  MEMORY_LINK_FLAGS+=(-sINITIAL_MEMORY=134217728 -sMAXIMUM_MEMORY=17179869184)
+fi
+PUBLISH_STAGE="$BUILD_DIR/publish"
+mkdir -p "$PUBLISH_STAGE"
+
+"$EMCC" "${EMCC_FLAGS[@]}" "$PATH_MAP" -std=c11 -D_GNU_SOURCE -ffp-contract=off \
   "${SANITIZER_FLAGS[@]}" \
   -Wno-unused-variable -I"$LF_SRC/src" -I"$RUNTIME_DIR" -I"$WEB_ROOT/native" \
   "$BUILD_DIR/stellarator_solver.o" \
@@ -181,15 +229,53 @@ EXPORTED="['_solver_simplex_precomp','_solver_run','_solver_result_nsrc','_solve
   "$WEB_ROOT/native/wasm_blas_shim.c" \
   "$WEB_ROOT/native/wasm_memory_preflight.c" \
   "$WEB_ROOT/native/wasm_api_adapter.c" \
-  "$WEB_ROOT/build-fmm3d/libfmm3d-wasm.a" \
+  "$FMM3D_BUILD_DIR/libfmm3d-wasm.a" \
   -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createSolver \
-  -sWASM_BIGINT=1 -sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=web,worker,node \
+  -sWASM_BIGINT=1 "${MEMORY_LINK_FLAGS[@]}" -sENVIRONMENT=web,worker,node \
   -sSTACK_SIZE="$WASM_STACK_SIZE" \
   -sINCOMING_MODULE_JS_API=wasmBinary,locateFile \
   -sEXPORTED_RUNTIME_METHODS=HEAPU8 \
   -sEXPORTED_FUNCTIONS="$EXPORTED" \
-  -o "$PUBLIC_DIR/solver.js" -lm
+  -o "$PUBLISH_STAGE/$OUTPUT_BASENAME.js" -lm
 
-test -s "$PUBLIC_DIR/solver.js"
-test -s "$PUBLIC_DIR/solver.wasm"
-echo "WASM_BUILD_OK lines=$lines bytes=$(wc -c < "$PUBLIC_DIR/solver.wasm" | tr -d ' ')"
+test -s "$PUBLISH_STAGE/$OUTPUT_BASENAME.js"
+test -s "$PUBLISH_STAGE/$OUTPUT_BASENAME.wasm"
+node --input-type=module -e \
+  'const m=await import(process.argv[1]); await m.default();' \
+  "file://$PUBLISH_STAGE/$OUTPUT_BASENAME.js"
+"$WEB_ROOT/scripts/publish-wasm-pair.sh" \
+  "$PUBLISH_STAGE/$OUTPUT_BASENAME.js" \
+  "$PUBLISH_STAGE/$OUTPUT_BASENAME.wasm" "$PUBLIC_DIR" "$OUTPUT_BASENAME"
+test -s "$PUBLIC_DIR/$OUTPUT_BASENAME.js"
+test -s "$PUBLIC_DIR/$OUTPUT_BASENAME.wasm"
+
+FMM3D_STAMP="$FMM3D_BUILD_DIR/cache.stamp"
+test -s "$FMM3D_STAMP"
+lfortran_commit=$(git -C "$LF_SRC" rev-parse HEAD)
+lfortran_describe=$(git -C "$LF_SRC" describe --tags --always --dirty)
+lfortran_diff_sha=$(git -C "$LF_SRC" diff --binary HEAD | shasum -a 256 | awk '{print $1}')
+provenance_next="$BUILD_DIR/.provenance.stamp.next.$$"
+{
+  printf 'architecture=%s\n' "$architecture"
+  printf 'lfortran_commit=%s\n' "$lfortran_commit"
+  printf 'lfortran_describe=%s\n' "$lfortran_describe"
+  printf 'lfortran_diff_sha256=%s\n' "$lfortran_diff_sha"
+  printf 'lfortran_binary_sha256=%s\n' "$(sha256_file "$LF_BIN")"
+  printf 'lfortran_runtime_patch_sha256=%s\n' "$(sha256_file "$LFORTRAN_WASM64_PATCH")"
+  printf 'generated_solver_c_sha256=%s\n' "$(sha256_file "$SOLVER_C")"
+  printf 'emcc_version=%s\n' "$("$EMCC" --version | sed -n '1p')"
+  printf 'emcc_flags='
+  separator=
+  for flag in "${EMCC_FLAGS[@]}" "${MEMORY_LINK_FLAGS[@]}"; do
+    printf '%s%q' "$separator" "$flag"
+    separator=' '
+  done
+  printf '\n'
+  printf 'artifact_js_sha256=%s\n' "$(sha256_file "$PUBLIC_DIR/$OUTPUT_BASENAME.js")"
+  printf 'artifact_wasm_sha256=%s\n' "$(sha256_file "$PUBLIC_DIR/$OUTPUT_BASENAME.wasm")"
+  while IFS= read -r line; do
+    printf 'fmm_%s\n' "$line"
+  done < "$FMM3D_STAMP"
+} > "$provenance_next"
+mv -f "$provenance_next" "$BUILD_DIR/provenance.stamp"
+echo "WASM_BUILD_OK architecture=$architecture lines=$lines bytes=$(wc -c < "$PUBLIC_DIR/$OUTPUT_BASENAME.wasm" | tr -d ' ')"

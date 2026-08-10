@@ -1,0 +1,37 @@
+diff --git a/lfortran_float128.c b/lfortran_float128.c
+--- a/lfortran_float128.c
++++ b/lfortran_float128.c
+@@ -457,6 +457,6 @@ static int f128_cmp_internal(lf_float128 a, lf_float128 b) {
+     return as ? -mag : mag;  /* if negative, flip */
+ }
+-#if !defined(__wasm32__)
++#if !defined(__wasm32__) && !defined(__wasm64__)
+ int __eqtf2   (lf_float128 a, lf_float128 b) { return f128_cmp_internal(a,b) == 0 ? 0 : 1; }
+ int __netf2   (lf_float128 a, lf_float128 b) { return f128_cmp_internal(a,b) != 0 ? 1 : 0; }
+ int __lttf2   (lf_float128 a, lf_float128 b) { int c=f128_cmp_internal(a,b); return c>=2?1:c; }
+@@ -1654,5 +1654,5 @@ static lf_float128 f128_parse_internal(const char *s, char **endptr) {
+ /* P. Non-ARM64 thin wrappers (restore public names)
+  * ======================================================================== */
+-#if !defined(__aarch64__) && !defined(__wasm32__)
++#if !defined(__aarch64__) && !defined(__wasm32__) && !defined(__wasm64__)
+ lf_float128 __addtf3(lf_float128 a, lf_float128 b)  { return __addtf3_lf_impl(a, b); }
+ lf_float128 __subtf3(lf_float128 a, lf_float128 b)  { return __subtf3_lf_impl(a, b); }
+ lf_float128 __multf3(lf_float128 a, lf_float128 b)  { return __multf3_lf_impl(a, b); }
+diff --git a/lfortran_float128_llvm.h b/lfortran_float128_llvm.h
+--- a/lfortran_float128_llvm.h
++++ b/lfortran_float128_llvm.h
+@@ -47,5 +47,5 @@ int64_t      __fixtfdi_lf_impl(lf_float128 a);
+ /* ── Public ABI symbols (non-ARM64, non-WASM: thin wrappers) ───────────── */
+-#if !defined(__aarch64__) && !defined(__wasm32__)
++#if !defined(__aarch64__) && !defined(__wasm32__) && !defined(__wasm64__)
+ lf_float128 __addtf3(lf_float128 a, lf_float128 b);
+ lf_float128 __subtf3(lf_float128 a, lf_float128 b);
+ lf_float128 __multf3(lf_float128 a, lf_float128 b);
+@@ -64,6 +64,6 @@ int64_t      __fixtfdi(lf_float128 a);
+ #endif
+ /* ── Comparisons (return int, no sret on any platform) ─────────────────── */
+-#if !defined(__wasm32__)
++#if !defined(__wasm32__) && !defined(__wasm64__)
+ int __eqtf2   (lf_float128 a, lf_float128 b);
+ int __netf2   (lf_float128 a, lf_float128 b);
+ int __lttf2   (lf_float128 a, lf_float128 b);

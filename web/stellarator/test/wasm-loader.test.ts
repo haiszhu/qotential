@@ -1,10 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import {
+  checkedHeapOffset,
   createSimplexPrecomp,
+  pointerArgument,
+  requireHeapRange,
   requireStatus,
   SolverStatusError,
   type SolverWasmModule,
 } from '../src/wasm-loader';
+
+describe('WASM pointer normalization', () => {
+  it('keeps wasm32 offsets numeric and converts wasm64 arguments to bigint', () => {
+    expect(pointerArgument(64, 32)).toBe(64);
+    expect(pointerArgument(64, 64)).toBe(64n);
+    expect(() => pointerArgument(-1, 64)).toThrow(RangeError);
+  });
+
+  it('checks pointer results and heap view ranges before conversion', () => {
+    expect(checkedHeapOffset(64)).toBe(64);
+    expect(checkedHeapOffset(64n)).toBe(64);
+    expect(() => checkedHeapOffset(BigInt(Number.MAX_SAFE_INTEGER) + 1n))
+      .toThrow(RangeError);
+    const heap = { HEAPU8: new Uint8Array(128) };
+    expect(() => requireHeapRange(heap, 64, 64)).not.toThrow();
+    expect(() => requireHeapRange(heap, 65, 64)).toThrow(RangeError);
+  });
+});
 
 describe('WASM status handling', () => {
   it('accepts zero and reports the solver error code for failures', () => {
@@ -64,6 +85,14 @@ describe('simplex precomputation ownership', () => {
     refs.dispose();
     refs.dispose();
     expect(state.frees).toHaveLength(7);
+  });
+
+  it('passes every owned pointer through the wasm64 bigint ABI', () => {
+    const state = mockModule();
+    const refs = createSimplexPrecomp(state.wasm, 4, 64);
+    expect(state.calls[0]?.slice(3).every((value) => typeof value === 'bigint')).toBe(true);
+    refs.dispose();
+    expect(state.frees.every((value) => typeof value === 'bigint')).toBe(true);
   });
 
   it('frees partial allocations and all arrays after precomputation failure', () => {

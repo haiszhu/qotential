@@ -1,0 +1,33 @@
+diff --git a/fort2c/transpiler.py b/fort2c/transpiler.py
+index 7d37417..bba10e3 100644
+--- a/fort2c/transpiler.py
++++ b/fort2c/transpiler.py
+@@ -556,7 +556,7 @@ INTRIN_DOUBLE_RESULT = {'DBLE', 'DREAL', 'DIMAG', 'CDABS', 'DABS', 'DSQRT',
+                         'DFLOAT', 'DMOD', 'DSINH', 'DCOSH', 'DTANH', 'DLOG10',
+                         'ALOG10', 'DDIM', 'DPROD'}
+ # intrinsics whose result is single (default real)
+-INTRIN_SINGLE_RESULT = {'REAL', 'FLOAT', 'AIMAG', 'IMAG'}
++INTRIN_SINGLE_RESULT = {'FLOAT', 'AIMAG', 'IMAG'}
+ # intrinsics whose result is integer
+ INTRIN_INT_RESULT = {'INT', 'IDINT', 'NINT', 'IDNINT', 'IABS', 'ISIGN',
+                      'FLOOR', 'CEILING', 'BTEST', 'IDIM', 'COUNT', 'ALL',
+@@ -998,8 +998,8 @@ class Emitter:
+             return f'creal({a[0]})'
+         if up == 'DBLE':
+             return f'creal({a[0]})' if cx else f'(double)({a[0]})'
+-        if up == 'REAL':                       # default real -> single
+-            return f'(float)creal({a[0]})' if cx else f'(float)({a[0]})'
++        if up == 'REAL':
++            return f'creal({a[0]})' if cx else f'(float)({a[0]})'
+         if up in ('DCONJG', 'CONJG'):
+             return f'conj({a[0]})'
+         if up == 'CDABS':
+@@ -1375,5 +1375,8 @@ class Emitter:
+     def func_ctype(self, nm, args):
+         up = nm.upper()
++        if up == 'REAL':
++            return ('double' if args and self.expr_ctype(args[0]) == 'fcomplex'
++                    else 'float')
+         if up in INTRIN_COMPLEX_RESULT:
+             return 'fcomplex'
+         if up in INTRIN_DOUBLE_RESULT:

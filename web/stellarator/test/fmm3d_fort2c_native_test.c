@@ -19,14 +19,15 @@ int main(void)
 {
     const double inv4pi = 0.07957747154594766788444188168626;
     const double threshold2 = 1.0e-30;
-    int64_t nsource = 4096, ntarg = nsource, ier = -1;
-    double eps = 1.0e-6;
+    int64_t nsource = 10000, ntarg = nsource, ier = -1;
+    double eps = 1.0e-12;
     double *source = calloc((size_t)3*nsource, sizeof(double));
     double *charge = calloc((size_t)nsource, sizeof(double));
     double *dipvec = calloc((size_t)3*nsource, sizeof(double));
     double *fmm = calloc((size_t)ntarg, sizeof(double));
     double *direct = calloc((size_t)ntarg, sizeof(double));
     double numerator = 0.0, denominator = 0.0, max_abs = 0.0;
+    double max_abs_direct = 0.0;
 
     if (!source || !charge || !dipvec || !fmm || !direct) return 2;
     for (int64_t j = 0; j < nsource; ++j) {
@@ -61,6 +62,7 @@ int main(void)
             value += charge[j]*cd + dot*cd/r2;
         }
         direct[i] = value;
+        if (fabs(value) > max_abs_direct) max_abs_direct = fabs(value);
         if (!isfinite(fmm[i])) {
             fprintf(stderr, "non-finite fort2c FMM output at %lld\n",
                     (long long)i);
@@ -73,12 +75,14 @@ int main(void)
     }
 
     const double relative_l2 = sqrt(numerator/denominator);
-    printf("FMM3D_FORT2C_NATIVE_CLANG n=%lld eps=%.1e rel_l2=%.17e max_abs=%.17e\n",
-           (long long)nsource, eps, relative_l2, max_abs);
+    const double normalized_max = max_abs/fmax(1.0, max_abs_direct);
+    printf("FMM3D_FORT2C_NATIVE_CLANG n=%lld eps=%.1e rel_l2=%.17e "
+           "max_abs=%.17e normalized_max=%.17e\n",
+           (long long)nsource, eps, relative_l2, max_abs, normalized_max);
     free(direct);
     free(fmm);
     free(dipvec);
     free(charge);
     free(source);
-    return relative_l2 <= eps ? 0 : 5;
+    return normalized_max <= 2.0e-11 ? 0 : 5;
 }

@@ -76,10 +76,18 @@ doplot = 1;
 [uvs, wts]   = get_vioreanu_nodes(order-1);
 D4 = w7x_modes();
 
-[sx, snx, sw, rts, rps, ntri] = stellarator_geo_mex(mp, np, order, ...
-       xg, wg, Dg, uvs, wts, D4, restol, cap);
-
+nfp = 5; nmode = size(D4,2); mn = D4(1:2,:); rc = D4(3,:).'; zs = D4(4,:).';
+charts = zeros(6,cap);
+[charts,nchart,ntri,geometry_ier] = lqsm_stellarator_mesh_init_mex( ...
+    mp,np,order,nfp,nmode,mn,rc,zs,restol,cap,charts,0,0,0);
+assert(geometry_ier == 0, 'W7-X mesh init failed');
 hdim = order*(order+1)/2;
+nsrc = ntri*hdim;
+[sx,snx,sw,rts,rps,geometry_ier] = lqsm_create_stellarator_tri_mesh_mex( ...
+    mp,np,order,nfp,nmode,mn,rc,zs,nchart,charts(:,1:nchart),ntri, ...
+    zeros(3,nsrc),zeros(3,nsrc),zeros(nsrc,1),zeros(3,nsrc), ...
+    zeros(3,nsrc),0);
+assert(geometry_ier == 0, 'W7-X mesh build failed');
 s.x = sx;  s.nx = snx;  s.w = sw;
 vol = sum(sum(sx.*snx,1).*sw)/3;
 fprintf('W7-X: %d triangles, %d nodes (mp %d, np %d, order %d, restol %.0e)\n', ...
@@ -130,13 +138,15 @@ fmmtime = toc;
 nquad   = order + 2;
 orderff = order + 2;
 distff  = 1.4;
-iside   = 30;
+exterior = true;
 isimd   = 0;
 ichart  = 0;            % the adaptive chart list is not exposed to uv2x yet;
                         % measured identical to ichart = 1 from order 8 up
 sbdnp   = 3;
 nbd     = sbdnp*nquad;
 xbuf    = zeros(3, nbd+3);
+[tgl,wgl,Dgl,w_bclag,Legmat,umatr,vmatr] = ...
+    qol_simplex_precomp_mex(nquad,order-1,hdim);
 nsrc    = size(sx, 2);
 allidx  = 1:nsrc;
 
@@ -157,9 +167,10 @@ for k = 1:ntri
 
   S_ij = zeros(m, hdim);  K_ij = zeros(m, hdim);
   Om   = zeros(4*hdim, m);  Ias = zeros(m, 1);  timeinfo = zeros(20, 1);
-  [S_ij, K_ij, ~, ~, timeinfo] = qol_rrq_mex(m, tc.x, iside, order, hdim, nquad, ...
-        hdim, sxk, swk, snxk, rtsk, rpsk, orderff, distff, isimd, ...
+  [S_ij,K_ij,~,~,timeinfo] = qol_rrq_mex(m,tc.x,hdim,sxk,snxk,swk, ...
+        rtsk,rpsk,order,nquad,orderff,distff,exterior,isimd, ...
         ichart, xbuf(:,1:nbd), xbuf(:,nbd+1:nbd+3), ...
+        tgl,wgl,Dgl,w_bclag,Legmat,umatr,vmatr, ...
         S_ij, K_ij, Om, Ias, timeinfo);
 
   % naive block, with the self entries zeroed the way the FMM drops them

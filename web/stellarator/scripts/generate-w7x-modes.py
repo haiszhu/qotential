@@ -15,6 +15,7 @@ WEB_ROOT = HERE.parents[1]
 QOTENTIAL_ROOT = HERE.parents[3]
 SOURCE = QOTENTIAL_ROOT / "test" / "w7x_grf.m"
 MODULE = WEB_ROOT / "fortran" / "w7x_modes_mod.f90"
+MODE_DATA = QOTENTIAL_ROOT / "external" / "LineQuaaadrature" / "src" / "w7x-modes-dat.txt"
 FIXTURE = WEB_ROOT / "geometry" / "fixtures" / "w7x.bin"
 
 
@@ -68,13 +69,8 @@ def scalar_assignments(name: str, values: list[str], kind: str) -> str:
 
 
 def module_text(modes: list[tuple[int, int, str, str]]) -> str:
-    mn = [f"{value}_8" for mode in modes for value in mode[:2]]
-    rc = [f"{mode[2]}_r64" for mode in modes]
-    zs = [f"{mode[3]}_r64" for mode in modes]
-    mn_plain = [str(value) for mode in modes for value in mode[:2]]
-    rc_plain = [mode[2] for mode in modes]
-    zs_plain = [mode[3] for mode in modes]
-    return f"""! Generated from test/w7x_grf.m by generate-w7x-modes.py.
+    del modes
+    return """! Generated from test/w7x_grf.m by generate-w7x-modes.py.
 ! Do not edit this coefficient table by hand.
 module w7x_modes_mod
   use quatapproximation_mod, only: r64
@@ -83,21 +79,26 @@ module w7x_modes_mod
   integer(8), parameter, public :: W7X_NMODE = 288_8
   integer(8), parameter, public :: W7X_NFP = 5_8
   public :: load_w7x_modes
-  integer(8), parameter, public :: W7X_MN(2*W7X_NMODE) = [ &
-{wrapped(mn, 8)}
-  real(r64), parameter, public :: W7X_RC(W7X_NMODE) = [ &
-{wrapped(rc, 3)}
-  real(r64), parameter, public :: W7X_ZS(W7X_NMODE) = [ &
-{wrapped(zs, 3)}
+
 contains
+
   subroutine load_w7x_modes(mn, rc, zs)
     real(r64), intent(out) :: mn(2*W7X_NMODE), rc(W7X_NMODE), zs(W7X_NMODE)
-{scalar_assignments('mn', mn_plain, 'r64')}
-{scalar_assignments('rc', rc_plain, 'r64')}
-{scalar_assignments('zs', zs_plain, 'r64')}
+    include 'w7x-modes-dat.txt'
   end subroutine load_w7x_modes
 end module w7x_modes_mod
 """
+
+
+def mode_data_text(modes: list[tuple[int, int, str, str]]) -> str:
+    mn = [str(value) for mode in modes for value in mode[:2]]
+    rc = [mode[2] for mode in modes]
+    zs = [mode[3] for mode in modes]
+    return "\n".join(
+        [scalar_assignments("mn", mn, "8"),
+         scalar_assignments("rc", rc, "r64"),
+         scalar_assignments("zs", zs, "r64")]
+    ) + "\n"
 
 
 def main() -> None:
@@ -107,14 +108,18 @@ def main() -> None:
 
     modes = parse_modes(SOURCE)
     expected_module = module_text(modes)
+    expected_mode_data = mode_data_text(modes)
     expected_fixture = fixture_bytes(modes)
     if args.check:
         if not MODULE.is_file() or MODULE.read_text() != expected_module:
             raise SystemExit(f"{MODULE}: missing or stale; run {HERE}")
+        if not MODE_DATA.is_file() or MODE_DATA.read_text() != expected_mode_data:
+            raise SystemExit(f"{MODE_DATA}: missing or stale; run {HERE}")
         if not FIXTURE.is_file() or FIXTURE.read_bytes() != expected_fixture:
             raise SystemExit(f"{FIXTURE}: does not match {SOURCE}")
     else:
         MODULE.write_text(expected_module)
+        MODE_DATA.write_text(expected_mode_data)
 
     digest = hashlib.sha256(expected_fixture).hexdigest()
     print(f"W7X_MODES_OK nmode={len(modes)} sha256={digest}")

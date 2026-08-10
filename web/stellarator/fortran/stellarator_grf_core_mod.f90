@@ -36,7 +36,13 @@ module stellarator_grf_core_mod
   use linequaaadrature_mod,  only: gauss_r64
   use koorn_geom_mod,        only: get_vioreanu_nodes, get_vioreanu_wts, &
        koorn_vals2coefs_coefs2vals, koorn_pols_batch_r64
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
   use w7x_modes_mod,         only: W7X_NMODE, W7X_NFP, load_w7x_modes
+#else
+  use stellarator_mesh_mod,  only: W7X_NMODE, W7X_NFP, &
+       get_w7x_modes_r64, stellarator_mesh_init_r64, &
+       create_stellarator_tri_mesh_r64, stellarator_tri_uv2x_r64
+#endif
   use lap3d_close_mod,       only: rrq_r64
   use lap3d_mod,             only: lap3dsdlpmat_r64
   use patch_refine_mod,      only: PR_ADAPTIVE, PR_SQUARE
@@ -288,7 +294,13 @@ contains
   real(r64), allocatable :: uvbd(:,:), tpan(:)
   real(r64), allocatable :: sx(:,:), snx(:,:), sw(:), rts(:,:), rps(:,:)
   real(r64), allocatable :: ub(:), ubn(:), u(:), charge(:), dipvec(:,:)
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
   real(r64), allocatable :: cl(:), mn(:), rc(:), zs(:)
+#else
+  real(r64), allocatable :: charts(:,:), rc(:), zs(:)
+  integer(8), allocatable :: mn(:,:)
+  integer(8) :: geometry_nfp, geometry_nmode
+#endif
   real(r64), allocatable :: csr_val(:)
   integer(8),allocatable :: mtcs(:), offs(:), csr_idx(:)
 #ifdef BIESOLVER_WASM_PROGRESS
@@ -337,6 +349,7 @@ contains
     call gauss_r64(nterms, tgl_geo, wgl_geo, Dgl_geo)
     call get_vioreanu_nodes(nterms-1_8, hdim, uvs)
     call get_vioreanu_wts(nterms-1_8, hdim, wts)
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
     if (cfg%use_w7x) then
       if (cfg%restol <= 0.0_r64 .or. cfg%restol /= cfg%restol) then
         status = 14_8
@@ -441,6 +454,38 @@ contains
                            sx, snx, sw, rts, rps)
 #endif
     end if
+#else
+    if (cfg%use_w7x) then
+      if (cfg%restol <= 0.0_r64 .or. cfg%restol /= cfg%restol) then
+        status = 14_8
+        return
+      end if
+      cap = 200000_8
+      allocate(charts(6,cap), mn(2,W7X_NMODE), rc(W7X_NMODE), zs(W7X_NMODE))
+      call get_w7x_modes_r64(geometry_nfp, geometry_nmode, mn, rc, zs)
+    else
+      cap = 4_8*mp*np
+      geometry_nfp = 1_8
+      geometry_nmode = 0_8
+      allocate(charts(6,cap), mn(2,0), rc(0), zs(0))
+    end if
+    call stellarator_mesh_init_r64(mp, np, nterms, geometry_nfp, &
+         geometry_nmode, mn, rc, zs, merge(cfg%restol,0.0_r64,cfg%use_w7x), &
+         cap, charts, nchart, ntri, ier)
+    if (ier /= 0_8) then
+      status = merge(10_8,11_8,cfg%use_w7x)
+      return
+    end if
+    nsrc = ntri*hdim
+    allocate(sx(3,nsrc), snx(3,nsrc), sw(nsrc), rts(3,nsrc), rps(3,nsrc))
+    call create_stellarator_tri_mesh_r64(mp, np, nterms, geometry_nfp, &
+         geometry_nmode, mn, rc, zs, nchart, charts(:,1:nchart), ntri, &
+         sx, snx, sw, rts, rps, ier)
+    if (ier /= 0_8) then
+      status = 12_8
+      return
+    end if
+#endif
 #ifndef BIESOLVER_WASM_SCALAR_ONLY
     call system_clock(c1);  t_geo = real(c1-c0, r64)/real(crate, r64)
 #endif
@@ -665,8 +710,13 @@ contains
       end do
       tw(:,1) = sx(:,1) + 0.01_r64*snx(:,1)
       xbuf = 0.0_r64
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
       if (ichart == 1_8) call map_panel_uv_bridge(cfg%use_w7x, cl, nchart, &
         mp, np, nterms, tgl_geo, 1_8, nbd+3_8, uvbd, mn, rc, zs, xbuf, geometry_ierr)
+#else
+      if (ichart == 1_8) call map_panel_uv_bridge(charts, nchart, mp, np, &
+        nterms, 1_8, nbd+3_8, uvbd, mn, rc, zs, xbuf, geometry_ierr)
+#endif
 #ifdef BIESOLVER_C_BACKEND_ROW_MAJOR
       if (geometry_ierr /= 0_c_int) then
         status = 13_8
@@ -774,8 +824,13 @@ contains
           wOm(1:4*hdim*mtc)  = 0.0_r64
           wIa(1:mtc)         = 0.0_r64
           xbuf = 0.0_r64
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
           if (ichart == 1_8) call map_panel_uv_bridge(cfg%use_w7x, cl, nchart, &
             mp, np, nterms, tgl_geo, k, nbd+3_8, uvbd, mn, rc, zs, xbuf, geometry_ierr)
+#else
+          if (ichart == 1_8) call map_panel_uv_bridge(charts, nchart, mp, np, &
+            nterms, k, nbd+3_8, uvbd, mn, rc, zs, xbuf, geometry_ierr)
+#endif
 #ifdef BIESOLVER_C_BACKEND_ROW_MAJOR
           if (geometry_ierr /= 0_c_int) then
             status = 13_8
@@ -875,9 +930,14 @@ contains
     call biesolver_progress(PROGRESS_RENDER_BEGIN, int(ntri,c_long_long), &
       0_c_long_long, 0_c_long_long, 0_c_long_long, 0.0_c_double)
 #endif
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
     call build_render_lattice(ubnmax, cfg%use_w7x, result, status, &
       nterms, hdim, ntri, nchart, mp, np, tgl_geo, cl, mn, rc, zs, u, &
       geometry_ierr)
+#else
+    call build_render_lattice(ubnmax, result, status, nterms, hdim, ntri, &
+      nchart, mp, np, charts, mn, rc, zs, u, geometry_ierr)
+#endif
     if (status /= 0_8) return
     ! Keep the generated C ABI portable: LFortran's current C backend does
     ! not transfer allocatable descriptors correctly for MOVE_ALLOC.
@@ -902,22 +962,37 @@ contains
     deallocate(tgl_geo, wgl_geo, Dgl_geo, uvs, wts)
     deallocate(tpan, uvbd)
     deallocate(rts, rps)
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
     deallocate(cl, stat=ier)
+#else
+    deallocate(charts, stat=ier)
+#endif
     deallocate(mn, stat=ier)
     deallocate(mtcs, offs, csr_idx, csr_val)
 
   end subroutine stellarator_run_case
 
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
   subroutine build_render_lattice(scale, use_w7x, result, status, &
       nterms, hdim, ntri, nchart, mp, np, tgl, cl, mn, rc, zs, u, &
       geometry_ierr)
     real(r64), intent(in) :: scale
     logical, intent(in) :: use_w7x
+#else
+  subroutine build_render_lattice(scale, result, status, nterms, hdim, &
+      ntri, nchart, mp, np, charts, mn, rc, zs, u, geometry_ierr)
+    real(r64), intent(in) :: scale
+#endif
     type(stellarator_case_result), intent(inout) :: result
     integer(8), intent(inout) :: status
     integer(8), intent(in) :: nterms, hdim, ntri, nchart, mp, np
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
     real(r64), intent(in) :: tgl(nterms), u(:)
     real(r64), allocatable, intent(in) :: cl(:), mn(:), rc(:), zs(:)
+#else
+    real(r64), intent(in) :: charts(6,nchart), rc(:), zs(:), u(:)
+    integer(8), intent(in) :: mn(:,:)
+#endif
     integer(c_int), intent(out) :: geometry_ierr
     integer(8), parameter :: KRENDER = 4_8
     integer(8), parameter :: NVR = 15_8
@@ -946,10 +1021,16 @@ contains
     do panel = 1, ntri
       voff = (panel-1_8)*NVR
       foff = (panel-1_8)*NFR
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
       call map_panel_uv_bridge(use_w7x, cl, nchart, mp, np, nterms, tgl, &
         panel, NVR, render_uv, mn, rc, zs, &
         result%render_xyz(:,voff+1_8:voff+NVR), &
         geometry_ierr)
+#else
+      call map_panel_uv_bridge(charts, nchart, mp, np, nterms, panel, NVR, &
+        render_uv, mn, rc, zs, result%render_xyz(:,voff+1_8:voff+NVR), &
+        geometry_ierr)
+#endif
 #ifdef BIESOLVER_C_BACKEND_ROW_MAJOR
       if (geometry_ierr /= 0_c_int) then
         status = 13_8
@@ -1021,15 +1102,28 @@ contains
     g(3) =  0.0_r64
   end function gradf_harm
 
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
   subroutine map_panel_uv_bridge(use_w7x, cl, nchart, mp, np, nterms, tgl, &
                                  itri, nuv, uv, mn, rc, zs, x, ierr)
     logical, intent(in) :: use_w7x
     real(r64), allocatable, intent(in) :: cl(:), mn(:), rc(:), zs(:)
+#else
+  subroutine map_panel_uv_bridge(charts, nchart, mp, np, nterms, itri, &
+                                 nuv, uv, mn, rc, zs, x, ierr)
+    real(r64), intent(in) :: charts(6,nchart), rc(:), zs(:)
+    integer(8), intent(in) :: mn(:,:)
+#endif
     integer(8), intent(in) :: nchart, mp, np, nterms, itri, nuv
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
     real(r64), intent(in) :: tgl(nterms), uv(2,nuv)
+#else
+    real(r64), intent(in) :: uv(2,nuv)
+    integer(8) :: mesh_ier
+#endif
     real(r64), intent(out) :: x(3,nuv)
     integer(c_int), intent(out) :: ierr
     ierr = 0_c_int
+#ifdef BIESOLVER_WASM_SCALAR_ONLY
     if (use_w7x) then
 #ifdef BIESOLVER_C_BACKEND_ROW_MAJOR
       ierr = biesolver_uv2x_charts_rowmajor(cl, int(nchart,c_long_long), &
@@ -1055,6 +1149,12 @@ contains
              int(nuv,c_long_long), uv, x)
 #endif
     end if
+#else
+    call stellarator_tri_uv2x_r64(mp, np, nterms, merge(W7X_NFP,1_8, &
+         size(mn,2)>0), int(size(mn,2),8), mn, rc, zs, nchart, charts, &
+         itri, nuv, uv, x, mesh_ier)
+    ierr = int(mesh_ier,c_int)
+#endif
   end subroutine map_panel_uv_bridge
 
   subroutine stellarator_result_clear(result)

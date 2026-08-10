@@ -8,7 +8,7 @@ tools for high‑order quaternionic product quadratures that resolve singular an
 - `utils/f`: source files. `lap3ddlp.f` implements the original close‑evaluation scheme in Ref. 1; `lap3dslp.f` implements the correct Laplace SLP formulation in Ref. 2. The improved RRQ scheme is in `src/`.
 - `src/`: Fortran implementation of the RRQ close evaluation of Ref. 2 — per‑patch uniform refinement, the S^{lm} tc integrals, and the assembled `rrq_r64`, with a MATLAB gateway in `matlab/`.
 - `external/`: [LineQuaaadrature](https://github.com/haiszhu/LineQuaaadrature) (line quadrature, ssq weights, solid angle) and [QuatApproximation](https://github.com/haiszhu/QuatApproximation) (S^{lm} moments, translation operators), as submodules. Build both before `make lib`.
-- `test/`: `stellarator_bench.f90` (throughput) and `stellarator_grf.m` (GRF accuracy). Both need the stellarator `.dat` files, which are not in this repo — pass their location via `DATDIR` / `rrqdir`.
+- `test/`: `stellarator_bench.f90` (throughput), `stellarator_grf.m` (built-in stellarator GRF accuracy), and `w7x_grf.m` (W7-X). Their surface meshes are generated in memory by the LineQuaaadrature Fortran/MEX geometry interfaces.
 
 ## References
 1. Hai Zhu, and Shravan Veerapaneni. 2022. “High-Order Close Evaluation of Laplace Layer Potentials: A Differential Geometric Approach.” *SIAM Journal on Scientific Computing*.

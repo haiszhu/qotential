@@ -1,11 +1,11 @@
 
 program stellarator_bench
   use quatapproximation_mod, only: r64
-  use lap3d_close_mod, only: rrq_r64
+  use stellarator_mesh_mod, only: stellarator_mesh_init_r64, &
+       create_stellarator_tri_mesh_r64
+  use lap3d_close_mod, only: rrq_r64, simplex_precomp_r64
   use patch_refine_mod, only: PR_ADAPTIVE, PR_SQUARE
   implicit none
-
-  character(len=200) :: DATDIR
 
   integer(8), parameter :: NC = 6_8
   integer(8), parameter :: ORDER_L(NC) = [ 4_8,  6_8,  8_8, 10_8, 12_8, 14_8]
@@ -14,7 +14,7 @@ program stellarator_bench
 
   integer(8) :: nterms, mp, np, npan, nsrc, m, k, j, i, hdim, nquad, orderff
   integer(8) :: ncases, icase, itarg, isimd, iadap
-  real(r64)  :: mpr, npr, ntr, hdr, nqr, npr2, ofr
+  integer(8) :: cap, nchart, ntri, geometry_ier
   real(r64)  :: distff, timeinfo(20), qradii, qpoint(3), tsrc, ttgt
   logical    :: exterior
 
@@ -23,10 +23,12 @@ program stellarator_bench
   real(r64),  allocatable :: tcx(:,:), S_ij(:,:), K_ij(:,:)
   real(r64),  allocatable :: Omegas(:,:), IalphaAsvestas(:)
   real(r64),  allocatable :: sxbd0(:,:), rv0(:,:)
+  real(r64),  allocatable :: tgl(:), wgl(:), Dgl(:,:), w_bclag(:)
+  real(r64),  allocatable :: Legmat(:,:), umatr(:,:), vmatr(:,:)
+  real(r64),  allocatable :: charts(:,:), rc(:), zs(:)
   logical,    allocatable :: near(:)
-  integer(8), allocatable :: idxk(:)
+  integer(8), allocatable :: idxk(:), mn(:,:)
 
-  character(len=200) :: fname
   character(len=32)  :: arg
 
   ncases = 1_8
@@ -43,8 +45,6 @@ program stellarator_bench
   end if
   PR_ADAPTIVE = (iadap == 1_8)
   if (iadap == 1_8 .or. iadap == 3_8) PR_SQUARE = .false.
-  DATDIR = './'
-  if (command_argument_count() >= 4) call get_command_argument(4, DATDIR)
   exterior = .true.          ! rrq's iside = 30
 
   do icase = 1, min(ncases, NC)
@@ -52,26 +52,31 @@ program stellarator_bench
     mp     = MP_L(icase)
     np     = NP_L(icase)
 
-    write(fname,'(a,a,i0,a,i0,a,i0,a)') trim(DATDIR), &
-        'stellarator_source_mp', mp, '_np', np, '_order', nterms, '.dat'
-    open(1, file=trim(fname), status='old')
-    read(1,*) mpr, npr, ntr, hdr, nqr, npr2, ofr
-    hdim    = int(hdr,  8)
-    nquad   = int(nqr,  8)
-    npan    = int(npr2, 8)
-    orderff = int(ofr,  8)
+    hdim    = nterms*(nterms+1_8)/2_8
+    nquad   = nterms + 2_8
+    orderff = nterms + 2_8
+    cap = 4_8*mp*np
+    allocate(charts(6,cap), mn(2,0), rc(0), zs(0))
+    call stellarator_mesh_init_r64(mp, np, nterms, 1_8, 0_8, mn, rc, zs, &
+         0.0_r64, cap, charts, nchart, ntri, geometry_ier)
+    if (geometry_ier /= 0_8) error stop 'stellarator mesh init failed'
+    npan = ntri
     nsrc    = npan*nterms*(nterms+1_8)/2_8
     allocate(sx(3,nsrc), snx(3,nsrc), sw(nsrc), rts(3,nsrc), rps(3,nsrc))
-    do i = 1, nsrc
-      read(1,*) sx(1:3,i), snx(1:3,i), sw(i), rts(1:3,i), rps(1:3,i)
-    end do
-    close(1)
+    call create_stellarator_tri_mesh_r64(mp, np, nterms, 1_8, 0_8, &
+         mn, rc, zs, nchart, charts(:,1:nchart), ntri, &
+         sx, snx, sw, rts, rps, geometry_ier)
+    if (geometry_ier /= 0_8) error stop 'stellarator mesh build failed'
 
     distff   = 1.4_r64
     timeinfo = 0.0_r64
     allocate(idxk(hdim), sxk(3,hdim), snxk(3,hdim), swk(hdim))
     allocate(sxbd0(3,3*nquad), rv0(3,3));  sxbd0 = 0.0_r64;  rv0 = 0.0_r64
     allocate(rtsk(3,hdim), rpsk(3,hdim), near(nsrc))
+    allocate(tgl(nquad), wgl(nquad), Dgl(nquad,nquad), w_bclag(nquad))
+    allocate(Legmat(nquad,nquad), umatr(hdim,hdim), vmatr(hdim,hdim))
+    call simplex_precomp_r64(nquad, nterms-1_8, hdim, &
+        tgl, wgl, Dgl, w_bclag, Legmat, umatr, vmatr)
 
     do k = 1, npan
       do i = 1, hdim
@@ -101,6 +106,7 @@ program stellarator_bench
       call rrq_r64(m, tcx, hdim, sxk, snxk, swk, rtsk, rpsk, &
                    nterms, nquad, orderff, distff, exterior, isimd, &
                    0_8, sxbd0, rv0, &
+                   tgl, wgl, Dgl, w_bclag, Legmat, umatr, vmatr, &
                    S_ij, K_ij, Omegas, IalphaAsvestas, timeinfo)
 
       deallocate(tcx, S_ij, K_ij, Omegas, IalphaAsvestas)
@@ -121,8 +127,9 @@ program stellarator_bench
     write(*,'(a)') ' '
 
     deallocate(sx, snx, sw, rts, rps)
+    deallocate(charts, mn, rc, zs)
     deallocate(idxk, sxk, snxk, swk, rtsk, rpsk, near, sxbd0, rv0)
+    deallocate(tgl, wgl, Dgl, w_bclag, Legmat, umatr, vmatr)
   end do
 
 end program stellarator_bench
-

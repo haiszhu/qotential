@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WEB_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 QOTENTIAL_DIR=$(cd "$WEB_ROOT/../.." && pwd)
+LQ_SOURCE_DIR=$(cd "$QOTENTIAL_DIR/external/LineQuaaadrature/src" && pwd)
 LF=${LF:-lfortran}
 EMCC=${EMCC:-emcc}
 LLVM_NM=${LLVM_NM:-llvm-nm}
@@ -103,13 +104,13 @@ while IFS= read -r relative; do
   [[ -z $relative || $relative == \#* ]] && continue
   source="$QOTENTIAL_DIR/$relative"
   name=$(basename "${relative%.f90}")
-  "$LF" "${CPP_FLAGS[@]}" -J "$MOD_DIR" -I "$MOD_DIR" \
+  "$LF" "${CPP_FLAGS[@]}" -J "$MOD_DIR" -I "$MOD_DIR" -I "$LQ_SOURCE_DIR" \
     -c "$source" -o "$BUILD_DIR/setup-$name.o"
   test -s "$BUILD_DIR/setup-$name.o"
 done < "$WEB_ROOT/fortran/wasm_sources.txt"
 
 SOLVER_C="$BUILD_DIR/stellarator_solver.c"
-"$LF" "${CPP_FLAGS[@]}" -J "$MOD_DIR" -I "$MOD_DIR" --show-c \
+"$LF" "${CPP_FLAGS[@]}" -J "$MOD_DIR" -I "$MOD_DIR" -I "$LQ_SOURCE_DIR" --show-c \
   "$WEB_ROOT/fortran/stellarator_grf_core_mod.f90" > "$SOLVER_C"
 python3 "$WEB_ROOT/scripts/rewrite-lfortran-c.py" "$SOLVER_C"
 lines=$(wc -l < "$SOLVER_C" | tr -d ' ')

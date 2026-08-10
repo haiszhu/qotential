@@ -11,7 +11,8 @@ trap 'rm -rf "$TMP"' EXIT
 FC=${FC:-gfortran-16}
 FLAGS=(-O0 -cpp -DBIESOLVER_WASM_SCALAR_ONLY -DBIESOLVER_R64_ONLY \
   -DBIESOLVER_STELLARATOR_BUILD -fdefault-integer-8 -J"$TMP" -I"$TMP" \
-  -I"$QOTENTIAL_ROOT/build" -I"$QA_ROOT/build" -I"$LQ_ROOT/build")
+  -I"$QOTENTIAL_ROOT/build" -I"$QA_ROOT/build" -I"$LQ_ROOT/build" \
+  -I"$LQ_ROOT/src")
 "$FC" "${FLAGS[@]}" -c "$LQ_ROOT/src/kernel_mod.f90" -o "$TMP/kernel.o"
 "$FC" "${FLAGS[@]}" -c "$LQ_ROOT/src/solidangle_mod.f90" -o "$TMP/solidangle.o"
 "$FC" "${FLAGS[@]}" -c "$QOTENTIAL_ROOT/src/patch_refine_mod.f90" -o "$TMP/patch.o"

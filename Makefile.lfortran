@@ -109,27 +109,25 @@ LQ_LAP3D_OBJ      := $(BLD_DIR)/lap3d_mod.o
 LQ_SIMD_SRC       := $(LQ_DIR)/src/lap3d_simd_mod.f90
 LQ_SIMD_MOD       := $(MOD_DIR)/lap3d_simd_mod.mod
 LQ_SIMD_OBJ       := $(BLD_DIR)/lap3d_simd_mod.o
+LQ_STELLARATOR_SRC := $(LQ_DIR)/src/stellarator_mesh_mod.f90
+LQ_STELLARATOR_MOD := $(MOD_DIR)/stellarator_mesh_mod.mod
+LQ_STELLARATOR_OBJ := $(BLD_DIR)/stellarator_mesh_mod.o
 LQ_OTHER_MODS     := $(LQ_ADAPTIVE_MOD) $(LQ_KERNEL_MOD) $(LQ_SOLIDANGLE_MOD) \
-                     $(LQ_LAP3D_MOD) $(LQ_SIMD_MOD)
+                     $(LQ_LAP3D_MOD) $(LQ_SIMD_MOD) $(LQ_STELLARATOR_MOD)
 LQ_OTHER_OBJS     := $(LQ_ADAPTIVE_OBJ) $(LQ_KERNEL_OBJ) $(LQ_SOLIDANGLE_OBJ) \
-                     $(LQ_LAP3D_OBJ) $(LQ_SIMD_OBJ)
+                     $(LQ_LAP3D_OBJ) $(LQ_SIMD_OBJ) $(LQ_STELLARATOR_OBJ)
 QOT_PATCH_SRC     := $(ROOT)/src/patch_refine_mod.f90
 QOT_PATCH_MOD     := $(MOD_DIR)/patch_refine_mod.mod
 QOT_PATCH_OBJ     := $(BLD_DIR)/patch_refine_mod.o
 QOT_CLOSE_SRC     := $(ROOT)/src/lap3d_close_mod.f90
 QOT_CLOSE_MOD     := $(MOD_DIR)/lap3d_close_mod.mod
 QOT_CLOSE_OBJ     := $(BLD_DIR)/lap3d_close_mod.o
-W7X_SRC           := $(ROOT)/web/stellarator/fortran/w7x_modes_mod.f90
-W7X_MOD           := $(MOD_DIR)/w7x_modes_mod.mod
-W7X_OBJ           := $(BLD_DIR)/w7x_modes_mod.o
 SGRF_CORE_SRC     := $(ROOT)/web/stellarator/fortran/stellarator_grf_core_mod.f90
 SGRF_CORE_MOD     := $(MOD_DIR)/stellarator_grf_core_mod.mod
 SGRF_CORE_OBJ     := $(BLD_DIR)/stellarator_grf_core_mod.o
 SGRF_SRC          := $(ROOT)/test/stellarator_grf.f90
 SGRF_OBJ          := $(BLD_DIR)/stellarator_grf.o
 SGRF_BIN          := $(BLD_DIR)/stellarator_grf
-STELLARATOR_C_SRC := $(ROOT)/utils/stellarator_geo_mex.c
-STELLARATOR_C_OBJ := $(BLD_DIR)/stellarator_geo.o
 SIMD_C_SRC        := $(LQ_DIR)/src/lap3d_simd.c
 SIMD_C_OBJ        := $(BLD_DIR)/lap3d_simd.o
 BLAS_SHIM_SRC     := $(ROOT)/utils/lfortran_blas_shim.c
@@ -137,8 +135,8 @@ BLAS_SHIM_OBJ     := $(BLD_DIR)/lfortran_blas_shim.o
 
 FORTRAN_OBJS := $(QA_PRIMITIVES_OBJ) $(QA_OTHER_OBJS) \
                 $(LQ_PRIMITIVES_OBJ) $(LQ_OTHER_OBJS) \
-                $(QOT_PATCH_OBJ) $(QOT_CLOSE_OBJ) $(W7X_OBJ) $(SGRF_CORE_OBJ) $(SGRF_OBJ)
-C_OBJS       := $(STELLARATOR_C_OBJ) $(SIMD_C_OBJ) $(BLAS_SHIM_OBJ)
+                $(QOT_PATCH_OBJ) $(QOT_CLOSE_OBJ) $(SGRF_CORE_OBJ) $(SGRF_OBJ)
+C_OBJS       := $(SIMD_C_OBJ) $(BLAS_SHIM_OBJ)
 
 .PHONY: help probe qa-primitives qa-modules lq-primitives lq-modules \
         qot-modules stellarator-object stellarator run clean
@@ -173,7 +171,8 @@ lq-modules: qa-modules lq-primitives $(LQ_OTHER_MODS) $(LQ_OTHER_OBJS)
 qot-modules: lq-modules $(QOT_PATCH_MOD) $(QOT_PATCH_OBJ) \
              $(QOT_CLOSE_MOD) $(QOT_CLOSE_OBJ)
 
-stellarator-object: qot-modules $(W7X_MOD) $(W7X_OBJ) $(SGRF_CORE_MOD) $(SGRF_CORE_OBJ) $(SGRF_OBJ)
+stellarator-object: qot-modules $(LQ_STELLARATOR_MOD) $(LQ_STELLARATOR_OBJ) \
+                    $(SGRF_CORE_MOD) $(SGRF_CORE_OBJ) $(SGRF_OBJ)
 
 stellarator: $(SGRF_BIN)
 
@@ -242,6 +241,14 @@ $(LQ_SIMD_MOD): $(LQ_SIMD_SRC) $(LQ_PRIMITIVES_MOD) | $(BLD_DIR) $(MOD_DIR)
 $(LQ_SIMD_OBJ): $(LQ_SIMD_MOD)
 	test -f $@
 
+$(LQ_STELLARATOR_MOD): $(LQ_STELLARATOR_SRC) $(LQ_PRIMITIVES_MOD) \
+	                       $(MOD_DIR)/quatapproximation_mod.mod | $(BLD_DIR) $(MOD_DIR)
+	$(call LF_COMPILE,$<,$(LQ_STELLARATOR_OBJ),stellarator_mesh_mod)
+	test -f $@
+
+$(LQ_STELLARATOR_OBJ): $(LQ_STELLARATOR_MOD)
+	test -f $@
+
 $(QOT_PATCH_MOD): $(QOT_PATCH_SRC) $(MOD_DIR)/quatapproximation_mod.mod \
 	                  $(MOD_DIR)/koorn_geom_mod.mod $(LQ_LAP3D_MOD) $(LQ_SIMD_MOD) | $(BLD_DIR) $(MOD_DIR)
 	$(call LF_COMPILE,$<,$(QOT_PATCH_OBJ),patch_refine_mod)
@@ -258,14 +265,8 @@ $(QOT_CLOSE_MOD): $(QOT_CLOSE_SRC) $(QA_OTHER_MODS) $(LQ_OTHER_MODS) \
 $(QOT_CLOSE_OBJ): $(QOT_CLOSE_MOD)
 	test -f $@
 
-$(W7X_MOD): $(W7X_SRC) $(QA_PRIMITIVES_MOD) | $(BLD_DIR) $(MOD_DIR) $(IR_DIR)
-	$(call LF_COMPILE,$<,$(W7X_OBJ),w7x_modes_mod)
-	test -f $@
-
-$(W7X_OBJ): $(W7X_MOD)
-	test -f $@
-
-$(SGRF_CORE_MOD): $(SGRF_CORE_SRC) $(QOT_CLOSE_MOD) $(QOT_PATCH_MOD) $(W7X_MOD) | $(BLD_DIR) $(MOD_DIR) $(IR_DIR)
+$(SGRF_CORE_MOD): $(SGRF_CORE_SRC) $(QOT_CLOSE_MOD) $(QOT_PATCH_MOD) \
+	                  $(LQ_STELLARATOR_MOD) | $(BLD_DIR) $(MOD_DIR) $(IR_DIR)
 	$(call LF_COMPILE,$<,$(SGRF_CORE_OBJ),stellarator_grf_core_mod)
 	test -f $@
 
@@ -274,9 +275,6 @@ $(SGRF_CORE_OBJ): $(SGRF_CORE_MOD)
 
 $(SGRF_OBJ): $(SGRF_SRC) $(SGRF_CORE_MOD) | $(BLD_DIR) $(IR_DIR)
 	$(call LF_COMPILE_PROGRAM,$<,$@,stellarator_grf)
-
-$(STELLARATOR_C_OBJ): $(STELLARATOR_C_SRC) | $(BLD_DIR)
-	$(CLANG) -O3 -c $< -o $@
 
 $(SIMD_C_OBJ): $(SIMD_C_SRC) | $(BLD_DIR)
 	$(CLANG) -O3 -fPIC -march=native -ffp-contract=off -c $< -o $@

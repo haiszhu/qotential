@@ -1,14 +1,9 @@
 
-if ~exist('rrqdir', 'var') || isempty(rrqdir)
-  error('stellarator_grf:rrqdir', ...
-        'Set rrqdir to the rrq checkout that holds test/stellarator (setup() and the .dat live there), then rerun.');
-end
-addpath(rrqdir);                                   % rrq-legacy root
-addpath(fullfile(rrqdir, 'test', 'stellarator'));  % the .dat files
-addpath(fullfile(fileparts(mfilename('fullpath')), '..', 'matlab'));  % qol_*
-addpath(fullfile(fileparts(mfilename('fullpath')), '..', 'utils'));
-cd(fullfile(rrqdir, 'test', 'stellarator'));       % setup() and fopen are relative
-setup()
+testdir = fileparts(mfilename('fullpath'));
+qroot = fileparts(testdir);
+addpath(qroot);
+setup();
+addpath(testdir);
 
 isimd = 0;
 
@@ -20,6 +15,12 @@ MyNp = 36*[1 2 3 4 5 6 7 8];
 MyTol = [1e-04 1e-06 1e-08 1e-09 1e-11 1e-14 1e-14];
 
 JJ = [2 2 3 3 4 5 6];
+if ~exist('ncases','var') || isempty(ncases)
+  ncases = numel(JJ);
+end
+assert(isscalar(ncases) && ncases >= 1 && ncases <= numel(JJ) && ...
+    ncases == floor(ncases), 'ncases must be an integer from 1 to %d', numel(JJ));
+JJ = JJ(1:ncases);
 MyErr = zeros(numel(JJ),1);
 MyFMMtime = zeros(numel(JJ),1);
 MyptswiseErr = [];
@@ -29,11 +30,19 @@ for idx = 1:numel(JJ)
   so.mp = MyMp(JJ(idx)); 
   so.np = MyNp(JJ(idx)); 
 
-  [xg,wg,Dg] = gauss(order);
-  [uvs,wts]  = get_vioreanu_nodes(order-1);
-  [sx,snx,sw,rts,rps,npan] = stellarator_geo_mex(so.mp,so.np,order,xg,wg,Dg,uvs,wts);
-  s.x = sx; s.nx = snx; s.w = sw; s.rts = rts; s.rps = rps;
+  nfp = 1; nmode = 0; mn = zeros(2,0); rc = zeros(0,1); zs = zeros(0,1);
+  cap = 4*so.mp*so.np; charts = zeros(6,cap);
+  [charts,nchart,npan,geometry_ier] = lqsm_stellarator_mesh_init_mex( ...
+      so.mp,so.np,order,nfp,nmode,mn,rc,zs,0,cap,charts,0,0,0);
+  assert(geometry_ier == 0, 'stellarator mesh init failed');
   h_dim = order*(order+1)/2;
+  nsrc = npan*h_dim;
+  [sx,snx,sw,rts,rps,geometry_ier] = lqsm_create_stellarator_tri_mesh_mex( ...
+      so.mp,so.np,order,nfp,nmode,mn,rc,zs,nchart,charts(:,1:nchart),npan, ...
+      zeros(3,nsrc),zeros(3,nsrc),zeros(nsrc,1),zeros(3,nsrc), ...
+      zeros(3,nsrc),0);
+  assert(geometry_ier == 0, 'stellarator mesh build failed');
+  s.x = sx; s.nx = snx; s.w = sw; s.rts = rts; s.rps = rps;
 
   pan = cell(1,npan);
   for k = 1:npan
@@ -84,21 +93,10 @@ for idx = 1:numel(JJ)
     end
     uvbd(:,nbd+1) = [0;0];  uvbd(:,nbd+2) = [1;0];  uvbd(:,nbd+3) = [0;1];
   end
-  mp = so.mp; 
-  np = so.np;
   hdim = order*(order+1)/2;
+  [tgl,wgl,Dgl,w_bclag,Legmat,umatr,vmatr] = ...
+      qol_simplex_precomp_mex(nquad,order-1,hdim);
   npan = numel(pan);
-  parameters = zeros(1,13);
-  parameters(1:7) = [mp np nterms hdim nquad npan orderff];
-  source = [sx;snx;sw;rts;rps]';
-  data = [parameters;source];
-  filename = sprintf('stellarator_source_mp%d_np%d_order%d.dat', mp, np, order);
-  fid = fopen(filename, 'w');
-  for i = 1:size(data, 1)
-    fprintf(fid, '%.16e ', data(i, :));  
-    fprintf(fid, '\n');  
-  end
-  fclose(fid);
   for k=1:numel(pan)
     
     qradii = 1.75*sqrt(sum(pan{k}.w)); % seems to be good
@@ -132,14 +130,18 @@ for idx = 1:numel(JJ)
     distff = 1.4;
     IalphaAsvestas2 = zeros(size(IalphaAsvestas));
     if ichart
-      xbuf = stellarator_geo_mex(so.mp,so.np,order,xg,wg,Dg,uvs,wts, k, uvbd);
+      [xbuf,geometry_ier] = lqsm_stellarator_tri_uv2x_mex( ...
+          so.mp,so.np,order,nfp,nmode,mn,rc,zs,nchart,charts(:,1:nchart), ...
+          k,size(uvbd,2),uvbd,zeros(3,size(uvbd,2)),0);
+      assert(geometry_ier == 0, 'stellarator uv map failed');
     else
       xbuf = zeros(3,nbd+3);
     end
-    [S_ij,K_ij,Omegas2,IalphaAsvestas2,timeinfo] = qol_rrq_mex(m,tx,iside,order,h_dim,nquad, ...
-                             n,sxk,swk,snxk,rtsk,rpsk,orderff,distff,isimd, ...
-                             ichart,xbuf(:,1:nbd),xbuf(:,nbd+1:nbd+3), ...
-                             S_ij,K_ij,Omegas,IalphaAsvestas2,timeinfo);
+    [S_ij,K_ij,Omegas2,IalphaAsvestas2,timeinfo] = qol_rrq_mex( ...
+        m,tx,n,sxk,snxk,swk,rtsk,rpsk,order,nquad,orderff,distff, ...
+        iside==30,isimd,ichart,xbuf(:,1:nbd),xbuf(:,nbd+1:nbd+3), ...
+        tgl,wgl,Dgl,w_bclag,Legmat,umatr,vmatr, ...
+        S_ij,K_ij,Omegas,IalphaAsvestas2,timeinfo);
   
     js = (k-1)*len+(1:len); 
     S_ij_naive = Lap3dSLPmat(tc,sk);
@@ -161,7 +163,6 @@ for idx = 1:numel(JJ)
   MyFMMtime(idx) = fmmtime;
   fprintf('case %d: order=%2d mp=%3d np=%3d  N=%d  GRF max rel err = %.3e  (fmm %.2f s)\n', ...
           idx, order, so.mp, so.np, numel(sx(1,:)), MyErr(idx), fmmtime);
-  save('stellarator.mat',"MyErr","MyptswiseErr","MyFMMtime");
 end
 
 function [sl,su,s_sub] = get_high_order_quad(pan,order,qntype,side)

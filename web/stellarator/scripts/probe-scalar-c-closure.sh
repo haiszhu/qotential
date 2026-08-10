@@ -68,7 +68,7 @@ for i in "${!NAMES[@]}"; do
   name=${NAMES[$i]}
   source=${SOURCES[$i]}
   echo "SETUP $name"
-  "$LF" "${CPP_FLAGS[@]}" -J "$MOD_DIR" -I "$MOD_DIR" \
+  "$LF" "${CPP_FLAGS[@]}" -J "$MOD_DIR" -I "$MOD_DIR" -I "$LQ_DIR/src" \
     -c "$source" -o "$PROBE_DIR/mod-$name.o"
   test -s "$PROBE_DIR/mod-$name.o"
 done
@@ -79,7 +79,7 @@ for i in "${!NAMES[@]}"; do
   echo "C $name"
   c_file="$PROBE_DIR/$name.c"
   object="$OBJ_DIR/$name.o"
-  "$LF" "${CPP_FLAGS[@]}" -J "$MOD_DIR" -I "$MOD_DIR" \
+  "$LF" "${CPP_FLAGS[@]}" -J "$MOD_DIR" -I "$MOD_DIR" -I "$LQ_DIR/src" \
     --show-c "$source" >"$c_file"
   lines=$(wc -l <"$c_file" | tr -d ' ')
   if (( lines < 20 )); then

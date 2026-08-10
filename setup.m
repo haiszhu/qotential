@@ -1,13 +1,10 @@
 function setup
-% all path...
-disp('might need to run: git submodule update --init --recursive')
-disp('then startup.m')
-mfilepath=fileparts(mfilename('fullpath'));
-addpath([mfilepath, '/kernels']);
-addpath([mfilepath, '/utils']);
-addpath([mfilepath, '/utils/harmonics']);
-addpath([mfilepath, '/utils/bin']);
-addpath([mfilepath, '/matlab']);
+% Add the maintained qotential MATLAB paths.
+mfilepath = fileparts(mfilename('fullpath'));
+addpath(fullfile(mfilepath, 'utils'));
+addpath(fullfile(mfilepath, 'utils', 'harmonic'));
+addpath(fullfile(mfilepath, 'utils', 'bin'));
+addpath(fullfile(mfilepath, 'matlab'));
 addpath(fullfile(mfilepath, 'external', 'LineQuaaadrature', 'matlab'));
 addpath(fullfile(mfilepath, 'external', 'LineQuaaadrature', 'utils'));
 
@@ -21,4 +18,5 @@ else
   warning('setup:noFMM3D', ...
       'FMM3D not found at %s -- Lap3dSLPfmm and Lap3dDLPfmm will fail.', ...
       fmm3d);
+end
 end

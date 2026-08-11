@@ -59,6 +59,28 @@ subroutine qol_simplex_precomp_mex(nquad, korder, kpols, tgl, wgl, Dgl, &
 end subroutine qol_simplex_precomp_mex
 
 
+subroutine qol_getnearquad_lap_rrq_mex(npan, nterms, hdim, nquad, &
+    nsrc, sx, snx, sw, rts, rps, ntcx, tcx, tcxrow, tcxi, &
+    orderff, distff, iside, isimd, nnz, sparsei, sparsej, &
+    sparsevs, sparsevd, timeinfo)
+  use lap3d_close_mod, only: getnearquad_lap_rrq_r64
+  implicit none
+  integer(8), intent(in) :: npan, nterms, hdim, nquad, nsrc, ntcx
+  integer(8), intent(in) :: orderff, iside, isimd, nnz
+  real(8), intent(in) :: sx(3,nsrc), snx(3,nsrc), sw(nsrc)
+  real(8), intent(in) :: rts(3,nsrc), rps(3,nsrc)
+  real(8), intent(in) :: tcx(3,ntcx), distff
+  integer(8), intent(in) :: tcxrow(ntcx), tcxi(npan+1)
+  integer(8), intent(inout) :: sparsei(nnz), sparsej(nnz)
+  real(8), intent(inout) :: sparsevs(nnz), sparsevd(nnz), timeinfo(20)
+
+  call getnearquad_lap_rrq_r64(npan, nterms, hdim, nquad, &
+      nsrc, sx, snx, sw, rts, rps, ntcx, tcx, tcxrow, tcxi, &
+      orderff, distff, iside, isimd, nnz, sparsei, sparsej, &
+      sparsevs, sparsevd, timeinfo)
+end subroutine qol_getnearquad_lap_rrq_mex
+
+
 subroutine qol_build_closepanel_precomp_mex(n, sx, snx, sw, r_vert, &
     nterms, h_dim, nbd, sbdnp, nquad, alpha, exterior, ichart, sxbd_chart, &
     tgl, wgl, Dgl, umatr, R, c, sxbd, swbd, stangbd, sspbd, &

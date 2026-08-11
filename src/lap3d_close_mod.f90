@@ -38,6 +38,7 @@ module lap3d_close_mod
   public :: build_closepanel_precomp_r64
   public :: simplex_precomp_r64
   public :: rrq_r64
+  public :: getnearquad_lap_rrq_r64
 
   integer(8), parameter :: SBDNP = 8_8
 
@@ -878,5 +879,84 @@ contains
     call clear_patch_levels_r64(lv)
 
   end subroutine rrq_r64
+
+
+  subroutine getnearquad_lap_rrq_r64(npan, nterms, hdim, nquad, &
+      nsrc, sx, snx, sw, rts, rps, ntcx, tcx, tcxrow, tcxi, &
+      orderff, distff, iside, isimd, nnz, sparsei, sparsej, &
+      sparsevs, sparsevd, timeinfo)
+    use lap3d_mod, only: lap3dsdlpmat_r64
+    integer(8), intent(in) :: npan, nterms, hdim, nquad, nsrc, ntcx
+    integer(8), intent(in) :: orderff, iside, isimd, nnz
+    real(r64), intent(in) :: sx(3,nsrc), snx(3,nsrc), sw(nsrc)
+    real(r64), intent(in) :: rts(3,nsrc), rps(3,nsrc)
+    real(r64), intent(in) :: tcx(3,ntcx), distff
+    integer(8), intent(in) :: tcxrow(ntcx), tcxi(npan+1)
+    integer(8), intent(inout) :: sparsei(nnz), sparsej(nnz)
+    real(r64), intent(inout) :: sparsevs(nnz), sparsevd(nnz)
+    real(r64), intent(inout) :: timeinfo(20)
+
+    integer(8) :: k, i, j, m, idxlo, idxhi, jlo, jhi
+    integer(8) :: source_col, out_idx
+    logical :: exterior
+    real(r64) :: tgl(nquad), wgl(nquad), Dgl(nquad,nquad)
+    real(r64) :: w_bclag(nquad), Legmat(nquad,nquad)
+    real(r64) :: umatr(hdim,hdim), vmatr(hdim,hdim)
+    real(r64) :: sxbd_chart(3,3*nquad), rv_chart(3,3)
+    real(r64), allocatable :: As(:,:), Ad(:,:), As_naive(:,:), Ad_naive(:,:)
+    real(r64), allocatable :: Omega(:,:), IalphaAsvestas(:)
+
+    call simplex_precomp_r64(nquad, nterms-1_8, hdim, tgl, wgl, Dgl, &
+        w_bclag, Legmat, umatr, vmatr)
+
+    exterior = mod(iside,10_8) == 0_8
+    sxbd_chart = 0.0_r64
+    rv_chart = 0.0_r64
+
+    do k = 1_8, npan
+      idxlo = (k-1_8)*hdim + 1_8
+      idxhi = k*hdim
+      jlo = tcxi(k)
+      jhi = tcxi(k+1_8)-1_8
+      m = jhi-jlo+1_8
+      if (m <= 0_8) cycle
+
+      allocate(As(m,hdim), Ad(m,hdim))
+      allocate(As_naive(m,hdim), Ad_naive(m,hdim))
+      allocate(Omega(4_8*hdim,m), IalphaAsvestas(m))
+
+      call rrq_r64(m, tcx(:,jlo:jhi), hdim, sx(:,idxlo:idxhi), &
+          snx(:,idxlo:idxhi), sw(idxlo:idxhi), rts(:,idxlo:idxhi), &
+          rps(:,idxlo:idxhi), nterms, nquad, orderff, distff, &
+          exterior, isimd, 0_8, sxbd_chart, rv_chart, &
+          tgl, wgl, Dgl, w_bclag, Legmat, umatr, vmatr, &
+          As, Ad, Omega, IalphaAsvestas, timeinfo)
+
+      call lap3dsdlpmat_r64(m, tcx(:,jlo:jhi), hdim, &
+          sx(:,idxlo:idxhi), snx(:,idxlo:idxhi), sw(idxlo:idxhi), &
+          As_naive, Ad_naive)
+
+      do i = 1_8, m
+        if (tcxrow(jlo+i-1_8) >= idxlo .and. &
+            tcxrow(jlo+i-1_8) <= idxhi) then
+          source_col = tcxrow(jlo+i-1_8)-idxlo+1_8
+          As_naive(i,source_col) = 0.0_r64
+          Ad_naive(i,source_col) = 0.0_r64
+        end if
+      end do
+
+      do j = 1_8, hdim
+        do i = 1_8, m
+          out_idx = (tcxi(k)-1_8)*hdim + (j-1_8)*m + i
+          sparsei(out_idx) = tcxrow(jlo+i-1_8)
+          sparsej(out_idx) = idxlo+j-1_8
+          sparsevs(out_idx) = As(i,j)-As_naive(i,j)
+          sparsevd(out_idx) = Ad(i,j)-Ad_naive(i,j)
+        end do
+      end do
+
+      deallocate(As, Ad, As_naive, Ad_naive, Omega, IalphaAsvestas)
+    end do
+  end subroutine getnearquad_lap_rrq_r64
 
 end module lap3d_close_mod

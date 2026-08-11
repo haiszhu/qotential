@@ -32,6 +32,7 @@ BLD_DIR    := $(ROOT)/build
 # ---- upstream package locations (override on command line) ----
 QA_DIR ?= $(ROOT)/external/QuatApproximation
 LQ_DIR ?= $(ROOT)/external/LineQuaaadrature
+FMM3DBIE_DIR ?= $(HOME)/git/fmm3dbie
 
 QA_LIB := $(QA_DIR)/build/libQuatApproximation.a
 LQ_LIB := $(LQ_DIR)/build/libLineQuaaadrature.a
@@ -49,9 +50,11 @@ UNAME := $(shell uname)
 ARCH  := $(shell uname -m)
 
 ifeq ($(UNAME), Darwin)
-  MATLAB_ROOT  := $(shell ls -d /Applications/MATLAB_R*.app 2>/dev/null | sort | tail -n1)
   MATLAB_ARCH  := maca64
   MEX_EXT      := mexmaca64
+  MATLAB_ROOT  := $(shell for app in $$(ls -d /Applications/MATLAB_R*.app 2>/dev/null | sort -r); do \
+                          test -f "$$app/bin/$(MATLAB_ARCH)/libmwservices.dylib" && { echo "$$app"; break; }; \
+                        done)
   OPENBLAS_DIR := /opt/homebrew/opt/openblas-singlethread
   MATLAB_INC   := -I$(MATLAB_ROOT)/extern/include
   MATLAB_LIBS  := $(MATLAB_ROOT)/bin/$(MATLAB_ARCH)/libmx.dylib \
@@ -94,18 +97,33 @@ MW_SRC  := $(MATLAB_DIR)/qotential.mw
 MEX_C   := $(MATLAB_DIR)/qotential_mex.c
 MEX_OUT := $(MATLAB_DIR)/qotential_mex.$(MEX_EXT)
 
+# ---- optional FMM3DBIE helper gateway ----
+FMM3DBIE_MATLAB_LIB := $(FMM3DBIE_DIR)/lib-static/libfmm3dbie_matlab.a
+FMM_HELPER_MW_SRC   := $(MATLAB_DIR)/fmm3dbie_helpers.mw
+FMM_HELPER_MEX_C    := $(MATLAB_DIR)/fmm3dbie_helpers_mex.c
+FMM_HELPER_MEX_BASE := $(MATLAB_DIR)/fmm3dbie_helpers_mex
+FMM_HELPER_MEX_OUT  := $(FMM_HELPER_MEX_BASE).$(MEX_EXT)
+MEX                 ?= $(MATLAB_ROOT)/bin/mex
+ifeq ($(UNAME),Darwin)
+  GFORTRAN_RUNTIME := libgfortran.dylib
+else
+  GFORTRAN_RUNTIME := libgfortran.so
+endif
+GFORTRAN_LIB_DIR := $(dir $(shell $(FC) --print-file-name=$(GFORTRAN_RUNTIME)))
+
 # ---- test ----
 TEST_SRC := $(TEST_DIR)/test_lap3d_close.f90
 TEST_BIN := $(BLD_DIR)/test_lap3d_close
 
 # ============================================================
-.PHONY: all lib mex test clean check-deps
+.PHONY: all lib mex fmm3dbie-mex test clean check-deps check-fmm3dbie
 
 all:
 	@echo "qotential -- BIE-solver glue (r64 mex interface)"
 	@echo ""
 	@echo "  make lib         build $(notdir $(LIB))"
 	@echo "  make mex         build $(notdir $(MEX_OUT))"
+	@echo "  make fmm3dbie-mex build the optional FMM3DBIE MATLAB helper"
 	@echo "  make test        build $(notdir $(TEST_BIN))"
 	@echo "  make clean       remove build artifacts"
 	@echo ""
@@ -117,9 +135,18 @@ check-deps:
 	@test -f $(QA_LIB) || { echo "ERROR: $(QA_LIB) not found.  Run 'make lib' in $(QA_DIR) first."; exit 1; }
 	@test -f $(LQ_LIB) || { echo "ERROR: $(LQ_LIB) not found.  Run 'make lib' in $(LQ_DIR) first."; exit 1; }
 
+check-fmm3dbie:
+	@test -f $(FMM3DBIE_MATLAB_LIB) || { \
+	  echo "ERROR: $(FMM3DBIE_MATLAB_LIB) not found."; \
+	  echo "Build the serial FMM3DBIE MATLAB library first, or set FMM3DBIE_DIR."; \
+	  exit 1; \
+	}
+
 lib: $(LIB)
 
 mex: $(MEX_OUT)
+
+fmm3dbie-mex: $(FMM_HELPER_MEX_OUT)
 
 test: $(TEST_BIN)
 
@@ -157,6 +184,17 @@ $(MEX_OUT): $(LIB) $(MEX_C) | check-deps
 	  -lgfortran -lquadmath -lm \
 	  -o $(MEX_OUT)
 
+# ---- optional FMM3DBIE helper MEX bundle ----
+$(FMM_HELPER_MEX_OUT): $(FMM_HELPER_MW_SRC) $(FMM3DBIE_MATLAB_LIB) | check-fmm3dbie
+	cd $(MATLAB_DIR) && $(MW) $(MWFLAGS) fmm3dbie_helpers_mex -mb -list fmm3dbie_helpers.mw
+	cd $(MATLAB_DIR) && $(MW) $(MWFLAGS) fmm3dbie_helpers_mex \
+	  -c fmm3dbie_helpers_mex.c fmm3dbie_helpers.mw
+	$(MEX) $(FMM_HELPER_MEX_C) $(FMM3DBIE_MATLAB_LIB) \
+	  -compatibleArrayDims -DMWF77_UNDERSCORE1 \
+	  "CFLAGS=-std=gnu17 -Wno-implicit-function-declaration -fPIC" \
+	  -L$(GFORTRAN_LIB_DIR) -output $(FMM_HELPER_MEX_BASE) \
+	  -lm -lstdc++ -ldl -lgfortran -lmwblas -lmwlapack
+
 # ---- pure-Fortran test binary ----
 $(TEST_BIN): $(LIB) $(TEST_SRC) | $(BLD_DIR)
 	$(FC) $(FFLAGS) $(TEST_SRC) \
@@ -167,4 +205,4 @@ $(TEST_BIN): $(LIB) $(TEST_SRC) | $(BLD_DIR)
 	  -o $(TEST_BIN)
 
 clean:
-	rm -rf $(BLD_DIR) $(MEX_OUT)
+	rm -rf $(BLD_DIR) $(MEX_OUT) $(FMM_HELPER_MEX_OUT)

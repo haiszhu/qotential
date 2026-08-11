@@ -1,0 +1,51 @@
+% Optional MATLAB helpers backed by the current FMM3DBIE static library.
+
+% ---------------------------------------------------------------------
+@function [norders,ixyzs,iptype,srcvals,srccoefs,wts] = get_wtorus_geom_mex(radii,scales,nosc,nu,nv,norder)
+
+npatches = 2*nu*nv;
+npols = (norder+1)*(norder+2)/2;
+npts = npatches*npols;
+npatchesp1 = npatches+1;
+
+norders = zeros(npatches,1);
+ixyzs = zeros(npatchesp1,1);
+iptype = zeros(npatches,1);
+srcvals = zeros(12,npts);
+srccoefs = zeros(9,npts);
+wts = zeros(npts,1);
+
+# FORTRAN get_wtorus_geom(double[3] radii, double[3] scales, int[1] nosc, int[1] nu, int[1] nv, int[1] npatches, int[1] norder, int[1] npts, inout int[npatches] norders, inout int[npatchesp1] ixyzs, inout int[npatches] iptype, inout double[12,npts] srcvals, inout double[9,npts] srccoefs, inout double[npts] wts);
+
+end
+
+% ---------------------------------------------------------------------
+@function wover = get_qwts_mex(npatches,novers,ixyzso,iptype,npts_over,srcover)
+
+npatchesp1 = npatches+1;
+wover = zeros(npts_over,1);
+
+# FORTRAN get_qwts(int[1] npatches, int[npatches] novers, int[npatchesp1] ixyzso, int[npatches] iptype, int[1] npts_over, double[12,npts_over] srcover, inout double[npts_over] wover);
+
+end
+
+% ---------------------------------------------------------------------
+@function srcover = oversample_geom_mex(npatches,norders,ixyzs,iptype,npts,srccoefs,srcvals,novers,ixyzso,npts_over)
+
+npatchesp1 = npatches+1;
+srcover = zeros(12,npts_over);
+
+# FORTRAN oversample_geom(int[1] npatches, int[npatches] norders, int[npatchesp1] ixyzs, int[npatches] iptype, int[1] npts, double[9,npts] srccoefs, double[12,npts] srcvals, int[npatches] novers, int[npatchesp1] ixyzso, int[1] npts_over, inout double[12,npts_over] srcover);
+
+end
+
+% ---------------------------------------------------------------------
+@function [cms,rads] = get_centroid_rads_mex(npatches,norders,ixyzs,iptype,npts,srccoefs)
+
+npatchesp1 = npatches+1;
+cms = zeros(3,npatches);
+rads = zeros(npatches,1);
+
+# FORTRAN get_centroid_rads(int[1] npatches, int[npatches] norders, int[npatchesp1] ixyzs, int[npatches] iptype, int[1] npts, double[9,npts] srccoefs, inout double[3,npatches] cms, inout double[npatches] rads);
+
+end

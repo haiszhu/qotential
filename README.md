@@ -21,6 +21,19 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 ./build/stellarator_bench 5 128 0
 
 This runs orders 4–12 with the 128-wide SIMD kernel and uniform refinement.
 
+The torus comparison additionally requires a built FMM3DBIE checkout.
+
+```bash
+make fmm3dbie-mex FMM3DBIE_DIR=~/git/fmm3dbie
+```
+
+Compile the platform-specific kdtree MEX files once from MATLAB:
+
+```matlab
+cd('/path/to/qotential/external/kdtree/toolbox')
+kdtree_compile
+```
+
 ## References
 1. Hai Zhu, and Shravan Veerapaneni. 2022. “High-Order Close Evaluation of Laplace Layer Potentials: A Differential Geometric Approach.” *SIAM Journal on Scientific Computing*.
 2. Shidong Jiang, and Hai Zhu. 2024. “Recursive reduction quadrature for the evaluation of Laplace layer potentials in three dimensions.” *arXiv preprint arXiv:2411.08342*.

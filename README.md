@@ -1,4 +1,4 @@
-# qotential
+# rrq
 
 tools for high‑order quaternionic product quadratures that resolve singular and nearly singular 3D Laplace layer potentials. The implementation follows Ref. 1 and Ref. 2.
 
@@ -38,11 +38,14 @@ kdtree_compile
 1. Hai Zhu, and Shravan Veerapaneni. 2022. “High-Order Close Evaluation of Laplace Layer Potentials: A Differential Geometric Approach.” *SIAM Journal on Scientific Computing*.
 2. Shidong Jiang, and Hai Zhu. 2024. “Recursive reduction quadrature for the evaluation of Laplace layer potentials in three dimensions.” *arXiv preprint arXiv:2411.08342*.
 
-## To do
+## To do list
 
-* computation pipeline and interface redesign
-* solid angle fix
-* quaternion approximation on curved element (thm)
-* Helmholtz kernel
-* Stokes kernel
-* quaternion operation abstraction?
+* (to do) check examples on different systems, and update readme
+* (to do) minimal Helmholtz slp + dlp
+* (to do) minimal Stokes slp...
+* (to do) check, and move all line quadrature to LQ submodule, move all quaternion approximation and locloc related to QA
+* (to do) solid angle fix
+* (to do) quaternion approximation on curved element (thm)
+* (to do) laplace slpn, dlpn, maybe (no legacy code available...) slpnn, dlpnn 
+* (to do) helmholtz slpn + dlpn
+* (to do) stokes (no legacy code available...) slpn, dlp, dlpn...

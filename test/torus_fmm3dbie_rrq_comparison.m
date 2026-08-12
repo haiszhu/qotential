@@ -14,39 +14,35 @@ qroot = fileparts(fileparts(mfilename('fullpath')));
 addpath(fullfile(qroot,'matlab'))
 addpath(fullfile(qroot,'utils'))
 addpath(fullfile(qroot,'external','LineQuaaadrature','utils'))
+addpath(fullfile(qroot,'external','LineQuaaadrature','matlab'))
 addpath(fullfile(qroot,'external','QuatApproximation','matlab'))
 addpath(fullfile(qroot,'external','kdtree','toolbox'))
 
-type = 'torus'; %so.a = 1; so.b = 0.5; o = []; o.fquad = false;
-so.a = 1; so.b = 0.5; o = []; o.fquad = false; 
-so.orig = 0; % this is origin corresponds to fmm3dbie torus paramters
-
 order = 8;
-so.mp = 2*6; so.np = 2*10;
-o.p = order;
+mp = 2*6;
+np = 2*10;
+orig = 0;
+radii_rrq = [1/2; 1; 0];
+scales_rrq = [1; 1; 1];
+nosc_rrq = 0;
+hdim = order*(order+1)/2;
+ntri = 2*mp*np;
+nsrc = ntri*hdim;
 geometry_tic = tic;
-[pan0,N] = create_panels(type,so,o);
-side = 'e';
-% quadrilateral panels
-pan = []; 
-for k = 1:numel(pan0)
-  % original coordinate: quadrature and density sampling
-  [sk,su,s_sub] = get_high_order_quad(pan0{k},order,'T');
-  % [sl,sr] = get_vioreanu_quadr(sk.x,order,order);
-  [sl,sr] = get_vioreanu_quadr(sk.x,order,order);
-  sl.rts = 2*sl.xpt; sl.rps = 2*sl.xps; % between tp and vr grid
-  sr.rts = 2*sr.xpt; sr.rps = 2*sr.xps;
-  pan{2*(k-1)+1} = sl;
-  pan{2*(k-1)+2} = sr;
-  h_dim = order*(order+1)/2;
+[sx,snx,sw,rts,rps,ier] = lqtm_create_torus_tri_mesh_mex( mp,np,order,radii_rrq,scales_rrq,nosc_rrq,orig,ntri, ...
+                                                          zeros(3,nsrc),zeros(3,nsrc),zeros(nsrc,1), ...
+                                                          zeros(3,nsrc),zeros(3,nsrc),0);
+assert(ier == 0, 'lqtm_create_torus_tri_mesh_mex failed with ier=%d',ier);
+sw = sw(:).';
+pan = cell(ntri,1);
+for k = 1:ntri
+    idx = (k-1)*hdim+(1:hdim);
+    pan{k}.x = sx(:,idx);
+    pan{k}.nx = snx(:,idx);
+    pan{k}.w = sw(idx);
+    pan{k}.rts = rts(:,idx);
+    pan{k}.rps = rps(:,idx);
 end
-
-% all on surface node
-sx = cellfun(@(p)p.x,pan,'uniformoutput',0); sx = horzcat(sx{:});
-snx = cellfun(@(p)p.nx,pan,'uniformoutput',0); snx = horzcat(snx{:});
-sw = cellfun(@(p)p.w,pan,'uniformoutput',0); sw = horzcat(sw{:});
-rts = cellfun(@(p)p.rts,pan,'uniformoutput',0); rts = horzcat(rts{:});
-rps = cellfun(@(p)p.rps,pan,'uniformoutput',0); rps = horzcat(rps{:});
 s.x = sx; s.nx = snx; s.w = sw; s.rts = rts; s.rps = rps;
 geometry_time = toc(geometry_tic);
 

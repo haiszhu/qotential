@@ -111,12 +111,12 @@ The workflow has only a `workflow_dispatch` trigger, so a commit or push does
 not start it. For the first deployment, select **GitHub Actions** under
 **Settings → Pages → Build and deployment → Source**. Then deploy manually:
 
-1. Open **Actions** in the qotential repository.
+1. Open **Actions** in the rrq repository.
 2. Select **Deploy stellarator WebAssembly demo**.
 3. Click **Run workflow**, select `main`, and confirm.
 
 After the workflow succeeds, open
-`https://haiszhu.github.io/qotential/`. No custom domain or server-side solver
+`https://haiszhu.github.io/rrq/`. No custom domain or server-side solver
 is required; the committed WASM solver runs in the visitor's browser.
 
 Useful numerical gates are:

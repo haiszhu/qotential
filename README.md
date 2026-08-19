@@ -40,9 +40,9 @@ kdtree_compile
 
 ## Supported kernels
 
-- A set of kernels: $\mathcal{K}=\{\,\Delta u=0;\ (\Delta+k^2)\,u=0;\ \mu\,\Delta\mathbf{u}-\nabla p=0,\ \nabla\!\cdot\mathbf{u}=0\,\}\times\{\mathcal{S},\mathcal{D},\mathcal{S}',\mathcal{D}'\}$
+- A set of kernels: $\mathcal{K}=\lbrace\Delta u=0;\ (\Delta+k^2)u=0;\ \mu\Delta\mathbf{u}-\nabla p=0,\ \nabla \cdot\mathbf{u}=0\rbrace\times\lbrace\mathcal{S},\mathcal{D},\mathcal{S}',\mathcal{D}'\rbrace$
 
-- rrq: $\mathcal{K}_{\mathrm{rrq}}=\{\,\Delta u=0\,\}\times\{\mathcal{S},\mathcal{D}\}\subsetneq\mathcal{K}$
+- rrq: $\mathcal{K}_{\mathrm{rrq}}=\lbrace\Delta u=0\rbrace\times\lbrace\mathcal{S},\mathcal{D}\rbrace\subsetneq\mathcal{K}$
 
 - wish list: $\mathcal{K}\setminus\mathcal{K}_{\mathrm{rrq}}$ and complexification
 
